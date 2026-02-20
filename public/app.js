@@ -318,15 +318,50 @@ function loadQuiz(id) {
       const review = el('textarea', { placeholder: 'Leave a review (optional)' });
       const submitRating = el('button', { type: 'button', onclick: async () => {
         const val = parseInt(ratingInput.value, 10);
+        if (!val) return alert('Enter 1-5');
         await api('/api/quizzes/' + id + '/rate', { method: 'POST', body: JSON.stringify({ userId: user ? user.id : null, rating: val, review: review.value }) });
         alert('Thanks for rating');
+        // refresh ratings panel
+        await loadRatings(id, q);
       } }, ['Submit Rating']);
       ratingBox.appendChild(ratingInput);
       ratingBox.appendChild(review);
       ratingBox.appendChild(submitRating);
       form.appendChild(ratingBox);
+      // also load ratings panel now (so ratings are visible after submit)
+      loadRatings(id, q);
     };
   });
+}
+
+async function loadRatings(quizId, quizObj) {
+  const panel = $('ratings-panel');
+  if (!panel) return;
+  panel.innerHTML = '';
+  const ratings = await api('/api/quizzes/' + quizId + '/ratings');
+  const usersRes = await api('/api/users');
+  const users = Array.isArray(usersRes) ? usersRes : [];
+  const userMap = {};
+  users.forEach(u => { if (u && u.id) userMap[u.id] = u.username || u.id; });
+
+  const avg = (quizObj && quizObj.averageRating) ? quizObj.averageRating : (ratings && ratings.length ? Math.round(ratings.reduce((s,r)=>s+r.rating,0)/ratings.length*10)/10 : 'N/A');
+  const header = el('div', { class: 'ratings-header' }, [ `Average: ${avg} — ${ratings ? ratings.length : 0} rating(s)` ]);
+  panel.appendChild(header);
+
+  if (!ratings || ratings.length === 0) {
+    panel.appendChild(el('div', {}, ['No ratings yet.']));
+    return;
+  }
+
+  // list reviews (most recent first)
+  ratings.sort((a,b)=> new Date(b.timestamp) - new Date(a.timestamp));
+  const list = el('ul', { class: 'ratings-list' });
+  ratings.forEach(r => {
+    const who = r.userId ? (userMap[r.userId] || r.userId) : 'Anonymous';
+    const li = el('li', {}, [ el('strong', {}, [ `${who} — ${r.rating}/5` ]), el('div', {}, [ r.review || '' ]), el('small', {}, [ new Date(r.timestamp).toLocaleString() ]) ]);
+    list.appendChild(li);
+  });
+  panel.appendChild(list);
 }
 
 const addQuestionBtn = $('add-question'); if (addQuestionBtn) addQuestionBtn.addEventListener('click', () => {
