@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Quiz Creator</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1>Quiz Maker</h1>
+    <nav id="nav">
+      <a href="/">Home</a>
+      <a href="/create.html">Create</a>
+      <a id="nav-profile" href="/profile.html">Profile</a>
+      <a href="/login.html">Login</a>
+      <button id="theme-toggle">Toggle Theme</button>
+    </nav>
+  </header>
+  <main>
+    <section id="list-section">
+      <h2>Available Quizzes</h2>
+      <div class="list-actions">
+        <input id="search" placeholder="Search quizzes" />
+        <button id="search-btn">Search</button>
+        <button id="export-quizzes">Export All</button>
+        <input id="import-file" type="file" accept="application/json" />
+      </div>
+      <ul id="quiz-list"></ul>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

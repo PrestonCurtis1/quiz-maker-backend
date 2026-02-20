@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Profile — Quiz Creator</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1>Profile</h1>
+    <nav id="nav">
+      <a href="/">Home</a>
+      <a href="/create.html">Create</a>
+      <a id="nav-profile" href="/profile.html">Profile</a>
+      <a href="/login.html">Login</a>
+      <button id="theme-toggle">Toggle Theme</button>
+    </nav>
+  </header>
+  <main>
+    <section id="profile-page">
+      <div id="profile-info">
+        <img id="profile-avatar" src="default-avatar.png" alt="avatar" style="width:96px;height:96px;border-radius:8px" />
+        <div>
+          <h2 id="profile-username"></h2>
+          <div>Average score: <span id="profile-avg">0</span>%</div>
+          <div>Quizzes taken: <span id="profile-count">0</span></div>
+        </div>
+      </div>
+      <form id="avatar-form" enctype="multipart/form-data">
+        <label>Upload avatar</label>
+        <input id="avatar-file" name="avatar" type="file" accept="image/*" />
+        <button id="upload-avatar">Upload</button>
+      </form>
+
+      <h3>Quizzes</h3>
+      <ul id="user-quizzes"></ul>
+
+      <h3>Results</h3>
+      <ul id="user-results"></ul>
+    </section>
+  </main>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

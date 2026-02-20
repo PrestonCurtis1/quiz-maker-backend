@@ -1,0 +1,29 @@
+:root{ --bg:#f6f8fb; --card:#ffffff; --muted:#6b7280; --accent:#5b7cff }
+*{box-sizing:border-box}
+body{font-family:Inter,system-ui,Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);margin:0;padding:24px;color:#111}
+header{display:flex;align-items:center;gap:16px;margin-bottom:18px}
+header h1{margin:0;font-size:20px}
+#user-area{margin-left:auto;display:flex;gap:8px;align-items:center}
+input,textarea,button{font-size:14px}
+main{display:grid;grid-template-columns:1fr 420px;gap:20px;align-items:start}
+#create-section,#list-section,#take-section{background:var(--card);padding:16px;border-radius:10px;box-shadow:0 6px 18px rgba(20,23,39,0.06)}
+.hidden{display:none}
+.question-block{border:1px solid #eee;padding:10px;border-radius:8px;margin-bottom:10px}
+input,textarea{width:100%;margin:8px 0;padding:10px;border:1px solid #e6e9ef;border-radius:8px}
+button{padding:8px 10px;border-radius:8px;border:0;background:var(--accent);color:#fff;cursor:pointer}
+button[type="button"]{background:#eef2ff;color:var(--accent);border:1px solid rgba(91,124,255,0.12)}
+button:active{transform:translateY(1px)}
+.list-actions{display:flex;gap:8px;align-items:center;margin-bottom:10px}
+#quiz-list{list-style:none;padding:0;margin:0}
+#quiz-list li{display:flex;gap:8px;align-items:center;padding:8px;border-bottom:1px solid #f0f2f5}
+.owner{color:var(--muted);font-size:13px}
+#edit-indicator{background:#fff7ed;border:1px solid #ffedd5;padding:8px;border-radius:6px;margin-bottom:8px}
+#result{margin-top:12px;padding:8px;background:#f3f4f6;border-radius:6px}
+
+/* Dark mode */
+body.dark{ --bg:#0b1220; --card:#0f1724; --muted:#9ca3af; --accent:#7c9cff; color:#e6eefb }
+body.dark a{ color:var(--accent) }
+body.dark section#take-section div#result{ background:#1e293b }
+body.dark div#edit-indicator{ background:#1e293b; border:1px solid #334155; color:#e6eefb }
+body.dark input,body.dark textarea{ background:#0b1220; border:1px solid #172033; color:#e6eefb }
+body.dark #create-section, body.dark #list-section, body.dark #take-section, body.dark .card { background:var(--card) }

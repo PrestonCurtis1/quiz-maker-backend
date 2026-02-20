@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Edit Quiz — Quiz Creator</title>
+  <link rel="stylesheet" href="style.css" />
+  <meta name="robots" content="noindex">
+</head>
+<body>
+    <nav id="nav">
+      <a href="/">Home</a>
+      <a href="/create.html">Create</a>
+      <a id="nav-profile" href="/profile.html">Profile</a>
+      <a href="/login.html">Login</a>
+      <button id="theme-toggle">Toggle Theme</button>
+    </nav>
+  <main>
+    <section id="create-page">
+      <div id="edit-top">
+        <label for="edit-select">Choose a quiz to edit:</label>
+        <select id="edit-select"><option value="">-- Select --</option></select>
+        <button id="new-quiz">New Quiz</button>
+      </div>
+      <div id="edit-indicator">Editing quiz <span id="editing-id"></span></div>
+      <input id="quiz-title" placeholder="Quiz title" />
+      <textarea id="quiz-description" placeholder="Quiz description (markdown)" rows="4"></textarea>
+      <div id="questions"></div>
+      <button id="add-question">Add Question</button>
+      <button id="save-quiz">Update Quiz</button>
+    </section>
+  </main>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Login — Quiz Creator</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1>Login</h1>
+    <nav id="nav">
+      <a href="/">Home</a>
+      <a href="/create.html">Create</a>
+      <a id="nav-profile" href="/profile.html">Profile</a>
+      <a href="/login.html">Login</a>
+      <button id="theme-toggle">Toggle Theme</button>
+    </nav>
+  </header>
+  <main>
+    <div class="card">
+      <h3 id="current-user"></h3>
+      <label for="username" id="username-label">Username</label>
+      <input id="username" />
+      <label for="password" id="password-label">Password</label>
+      <input id="password" type="password" />
+      <div style="margin-top:8px">
+        <button id="login">Login</button>
+        <button id="signup">Sign up</button>
+        <button id="logout">Logout</button>
+      </div>
+      <div id="auth-msg"></div>
+    </div>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>
