@@ -11,7 +11,7 @@ const DATA_FILE = path.join(DATA_DIR, 'quizzes.json');
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const RATINGS_FILE = path.join(DATA_DIR, 'ratings.json');
 const UPLOAD_DIR = path.join(__dirname, 'public', 'uploads');
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 80;
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
