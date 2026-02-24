@@ -262,41 +262,153 @@
     return 'medium';
   }
 
-  function buildMultipleOptions(facet, topicLc, index, difficulty) {
-    const strongTrue = [
-      `${facet} helps explain core ideas in ${topicLc}.`,
-      `${facet} improves understanding through examples in ${topicLc}.`,
-      `${facet} is useful when analyzing ${topicLc}.`
+  function isSameFacetAsTopic(facet, topicLc) {
+    return normalizeKey(facet || '') === normalizeKey(topicLc || '');
+  }
+
+  function detectTopicProfile(topicLc) {
+    const key = normalizeKey(topicLc || '');
+    if (!key) return null;
+    if (key === 'fruit' || key === 'fruits') return 'fruits';
+    const tokens = key.split(' ').filter(Boolean);
+    if (tokens.includes('fruit') || tokens.includes('fruits')) return 'fruits';
+    return null;
+  }
+
+  function buildTopicSpecificMultipleOptions(topicProfile, index, difficulty) {
+    if (topicProfile !== 'fruits') return null;
+
+    const trueStatements = [
+      'Most fruits develop from flowers and contain seeds.',
+      'Many fruits are good sources of fiber, vitamins, and water.',
+      'Fruit ripeness often changes color, aroma, texture, and sweetness.'
     ];
     const nuancedTrue = [
-      `${facet} connects principles with practical decisions in ${topicLc}.`,
-      `${facet} provides structure for reasoning about ${topicLc}.`,
-      `${facet} supports comparing tradeoffs in ${topicLc}.`
+      'Botanically, fruits form from the ovary of a flower after fertilization.',
+      'Fruit structure helps protect and disperse seeds in different environments.',
+      'Different fruit varieties can have very different sugar, fiber, and acid levels.'
     ];
-    const falseClaims = [
-      `${facet} is unrelated to ${topicLc}.`,
-      `${facet} has no practical use in ${topicLc}.`,
-      `${facet} always means exactly one rigid thing in ${topicLc}.`,
-      `${facet} replaces all other ideas in ${topicLc}.`
+    const falseStatements = [
+      'All fruits must be cooked before they are safe to eat.',
+      'Fruits contain no natural sugars.',
+      'Every fruit grows only in tropical climates.',
+      'Fruits are always nutritionally identical to each other.'
     ];
+
+    const truths = difficulty === 'hard' ? nuancedTrue : trueStatements;
+    const correct = truths[index % truths.length];
+    const d1 = falseStatements[index % falseStatements.length];
+    const d2 = falseStatements[(index + 1) % falseStatements.length];
+    const d3 = falseStatements[(index + 2) % falseStatements.length];
+    return [correct, d1, d2, d3];
+  }
+
+  function buildTopicSpecificMultiOptions(topicProfile) {
+    if (topicProfile !== 'fruits') return null;
+    return {
+      options: [
+        'Fruits commonly provide vitamins, minerals, and dietary fiber.',
+        'All fruits have exactly the same nutrient profile.',
+        'Fruit characteristics can vary by variety, climate, and ripeness.',
+        'Fruits never contain natural sugars.'
+      ],
+      correct: [0, 2]
+    };
+  }
+
+  function buildTopicSpecificMatchingPairs(topicProfile) {
+    if (topicProfile !== 'fruits') return null;
+    return [
+      { left: 'Citrus', right: 'Orange, lemon, lime' },
+      { left: 'Berry', right: 'Strawberry, blueberry, raspberry' },
+      { left: 'Stone fruit', right: 'Peach, plum, cherry' }
+    ];
+  }
+
+  function buildMultipleOptions(facet, topicLc, index, difficulty) {
+    const topicProfile = detectTopicProfile(topicLc);
+    const topicSpecific = buildTopicSpecificMultipleOptions(topicProfile, index, difficulty);
+    if (topicSpecific) return topicSpecific;
+
+    const sameFacetTopic = isSameFacetAsTopic(facet, topicLc);
+
+    const strongTrue = sameFacetTopic
+      ? [
+        `Core ideas in ${topicLc} are best understood through clear categories and examples.`,
+        `Understanding ${topicLc} improves when comparing examples and use cases.`,
+        `Analyzing ${topicLc} with context helps build reliable understanding.`
+      ]
+      : [
+        `${facet} helps explain core ideas in ${topicLc}.`,
+        `${facet} improves understanding through examples in ${topicLc}.`,
+        `${facet} is useful when analyzing ${topicLc}.`
+      ];
+
+    const nuancedTrue = sameFacetTopic
+      ? [
+        `Reasoning about ${topicLc} improves by balancing principles with practical context.`,
+        `${topicLc} can be evaluated through multiple perspectives, not one rigid rule.`,
+        `Comparing tradeoffs is a useful way to understand ${topicLc}.`
+      ]
+      : [
+        `${facet} connects principles with practical decisions in ${topicLc}.`,
+        `${facet} provides structure for reasoning about ${topicLc}.`,
+        `${facet} supports comparing tradeoffs in ${topicLc}.`
+      ];
+
+    const falseClaims = sameFacetTopic
+      ? [
+        `${topicLc} is unrelated to real-world use.`,
+        `${topicLc} has no practical value.`,
+        `${topicLc} always means exactly one rigid thing.`,
+        `${topicLc} replaces all other relevant ideas.`
+      ]
+      : [
+        `${facet} is unrelated to ${topicLc}.`,
+        `${facet} has no practical use in ${topicLc}.`,
+        `${facet} always means exactly one rigid thing in ${topicLc}.`,
+        `${facet} replaces all other ideas in ${topicLc}.`
+      ];
 
     const truths = difficulty === 'hard' ? nuancedTrue : strongTrue;
     const correct = truths[index % truths.length];
     const d1 = falseClaims[index % falseClaims.length];
     const d2 = falseClaims[(index + 1) % falseClaims.length];
-    const d3 = difficulty === 'hard'
-      ? `${facet} only matters for memorization, not reasoning, in ${topicLc}.`
-      : `${facet} should usually be ignored in ${topicLc}.`;
+    const d3 = sameFacetTopic
+      ? (difficulty === 'hard'
+        ? `${topicLc} only matters for memorization, not reasoning.`
+        : `${topicLc} should usually be ignored.`)
+      : (difficulty === 'hard'
+        ? `${facet} only matters for memorization, not reasoning, in ${topicLc}.`
+        : `${facet} should usually be ignored in ${topicLc}.`);
 
     return [correct, d1, d2, d3];
   }
 
   function buildTextAnswers(facet, topicLc, hint) {
-    const answers = [
-      `${facet.toLowerCase()} in ${topicLc}`,
-      `${facet.toLowerCase()} basics`,
-      `${facet.toLowerCase()} application`
-    ];
+    const topicProfile = detectTopicProfile(topicLc);
+    if (topicProfile === 'fruits') {
+      const answers = [
+        'fruits provide fiber and vitamins',
+        'fruits develop from flowers and often contain seeds',
+        'fruit nutrition and taste vary by type and ripeness'
+      ];
+      if (hint) answers.push(hint);
+      return uniqueStrings(answers, 5);
+    }
+
+    const sameFacetTopic = isSameFacetAsTopic(facet, topicLc);
+    const answers = sameFacetTopic
+      ? [
+        `${topicLc} basics`,
+        `core concepts of ${topicLc}`,
+        `${topicLc} applications`
+      ]
+      : [
+        `${facet.toLowerCase()} in ${topicLc}`,
+        `${facet.toLowerCase()} basics`,
+        `${facet.toLowerCase()} application`
+      ];
     if (hint) answers.push(hint);
     return uniqueStrings(answers, 5);
   }
@@ -354,38 +466,240 @@
     return 'medium';
   }
 
-  function askDraftQuizConfig() {
-    const topicInput = window.prompt('Quiz topic?', 'General Knowledge');
-    if (topicInput === null) return null;
+  function shouldAutoIncludeMath({ topic, focus, requestedType }) {
+    if (requestedType === 'number') return true;
 
-    const countInput = window.prompt('How many questions? (3-20)', '8');
-    if (countInput === null) return null;
+    const combined = normalizeSpaces([topic, focus].filter(Boolean).join(' ')).toLowerCase();
+    if (!combined) return false;
 
-    const typeInput = window.prompt('Question type: mixed, multiple, multi, matching, text, or number', 'mixed');
-    if (typeInput === null) return null;
+    const mathKeywordPattern = /\b(math|mathematics|algebra|geometry|trigonometry|calculus|arithmetic|equation|equations|solve|formula|formulas|physics|chemistry|statistics|probability|percent|percentage|ratio|fraction|integer|decimal)\b/;
+    if (mathKeywordPattern.test(combined)) return true;
 
-    const difficultyInput = window.prompt('Difficulty: easy, medium, or hard', 'medium');
-    if (difficultyInput === null) return null;
+    const equationPattern = /(?:\d\s*[+\-*/×÷=])|(?:[+\-*/×÷=]\s*\d)/;
+    if (equationPattern.test(combined)) return true;
 
-    const focusInput = window.prompt('Any focus area? (optional)', '') || '';
-    const questionHintInput = window.prompt('Question style instruction? (optional)', '') || '';
-    const descriptionHintInput = window.prompt('Description instruction? (optional)', '') || '';
-    const answerHintInput = window.prompt('Answer instruction? (optional)', '') || '';
-    const includeMath = window.confirm('Include math/equation-style content? Click OK for yes, Cancel for no.');
+    const inferred = parsePromptInstructions(combined);
+    return !!(inferred && inferred.equationQuiz);
+  }
 
-    return {
-      topic: normalizeSpaces(topicInput) || 'General Knowledge',
-      questionCount: clampNumber(countInput, 3, 20, 8),
-      requestedType: normalizeRequestedType(typeInput),
-      difficulty: normalizeDifficulty(difficultyInput),
-      focus: normalizeSpaces(focusInput),
-      includeMath,
-      constraints: {
-        questionHint: normalizeSpaces(questionHintInput),
-        descriptionHint: normalizeSpaces(descriptionHintInput),
-        answerHint: normalizeSpaces(answerHintInput)
+  function askDraftQuizConfig(defaults = {}) {
+    return new Promise(resolve => {
+      const existing = byId('ai-draft-overlay');
+      if (existing) existing.remove();
+
+      const defaultCount = Number.isFinite(defaults.defaultQuestionCount)
+        ? clampNumber(defaults.defaultQuestionCount, 3, 20, 8)
+        : 8;
+      const defaultDifficulty = normalizeDifficulty(defaults.defaultDifficulty || 'medium');
+      const openAiConfigured = (defaults.aiProvider || 'local') === 'openai' && !!normalizeSpaces(defaults.openaiApiKey || '');
+
+      const overlay = document.createElement('div');
+      overlay.id = 'ai-draft-overlay';
+      overlay.className = 'ai-draft-overlay';
+
+      const modal = document.createElement('div');
+      modal.className = 'ai-draft-modal';
+      modal.setAttribute('role', 'dialog');
+      modal.setAttribute('aria-modal', 'true');
+
+      const title = document.createElement('h3');
+      title.textContent = 'Generate Draft Quiz';
+
+      const form = document.createElement('form');
+      form.className = 'ai-draft-form';
+
+      const topicLabel = document.createElement('label');
+      topicLabel.textContent = 'Quiz topic';
+      const topicInput = document.createElement('input');
+      topicInput.type = 'text';
+      topicInput.placeholder = 'General Knowledge';
+      topicInput.value = 'General Knowledge';
+
+      const row = document.createElement('div');
+      row.className = 'ai-draft-row';
+
+      const countWrap = document.createElement('div');
+      const countLabel = document.createElement('label');
+      countLabel.textContent = 'Question count (3-20)';
+      const countInput = document.createElement('input');
+      countInput.type = 'number';
+      countInput.min = '3';
+      countInput.max = '20';
+      countInput.value = String(defaultCount);
+      countWrap.appendChild(countLabel);
+      countWrap.appendChild(countInput);
+
+      const typeWrap = document.createElement('div');
+      const typeLabel = document.createElement('label');
+      typeLabel.textContent = 'Question type';
+      const typeSelect = document.createElement('select');
+      ['mixed', 'multiple', 'multi', 'matching', 'text', 'number'].forEach(type => {
+        const opt = document.createElement('option');
+        opt.value = type;
+        opt.textContent = type;
+        typeSelect.appendChild(opt);
+      });
+      typeSelect.value = 'mixed';
+      typeWrap.appendChild(typeLabel);
+      typeWrap.appendChild(typeSelect);
+
+      const difficultyWrap = document.createElement('div');
+      const difficultyLabel = document.createElement('label');
+      difficultyLabel.textContent = 'Difficulty';
+      const difficultySelect = document.createElement('select');
+      ['easy', 'medium', 'hard'].forEach(level => {
+        const opt = document.createElement('option');
+        opt.value = level;
+        opt.textContent = level;
+        difficultySelect.appendChild(opt);
+      });
+      difficultySelect.value = defaultDifficulty;
+      difficultyWrap.appendChild(difficultyLabel);
+      difficultyWrap.appendChild(difficultySelect);
+
+      row.appendChild(countWrap);
+      row.appendChild(typeWrap);
+      row.appendChild(difficultyWrap);
+
+      const focusLabel = document.createElement('label');
+      focusLabel.textContent = 'Focus area (optional)';
+      const focusInput = document.createElement('input');
+      focusInput.type = 'text';
+      focusInput.placeholder = 'Optional focus';
+
+      const generalPromptLabel = document.createElement('label');
+      generalPromptLabel.textContent = 'General prompt (optional)';
+      const generalPromptInput = document.createElement('textarea');
+      generalPromptInput.rows = 4;
+      generalPromptInput.placeholder = 'Add broader instructions for the generator (tone, coverage, style, constraints).';
+
+      const questionHintLabel = document.createElement('label');
+      questionHintLabel.textContent = 'Question style instruction (optional)';
+      const questionHintInput = document.createElement('input');
+      questionHintInput.type = 'text';
+
+      const descriptionHintLabel = document.createElement('label');
+      descriptionHintLabel.textContent = 'Description instruction (optional)';
+      const descriptionHintInput = document.createElement('input');
+      descriptionHintInput.type = 'text';
+
+      const answerHintLabel = document.createElement('label');
+      answerHintLabel.textContent = 'Answer instruction (optional)';
+      const answerHintInput = document.createElement('input');
+      answerHintInput.type = 'text';
+
+      const providerWrap = document.createElement('div');
+      providerWrap.className = 'ai-draft-provider';
+      const providerLabel = document.createElement('label');
+      providerLabel.textContent = 'Provider for this request';
+      const providerSelect = document.createElement('select');
+      const localOpt = document.createElement('option');
+      localOpt.value = 'local';
+      localOpt.textContent = 'Local AI';
+      providerSelect.appendChild(localOpt);
+
+      if (openAiConfigured) {
+        const openAiOpt = document.createElement('option');
+        openAiOpt.value = 'openai';
+        openAiOpt.textContent = `OpenAI (${defaults.openaiModel || 'gpt-4.1-mini'})`;
+        providerSelect.appendChild(openAiOpt);
+        providerSelect.value = 'openai';
+      } else {
+        providerSelect.value = 'local';
       }
-    };
+
+      providerWrap.appendChild(providerLabel);
+      providerWrap.appendChild(providerSelect);
+
+      const note = document.createElement('div');
+      note.className = 'q-help';
+      note.textContent = 'Math/equation content is auto-detected from your inputs.';
+
+      const actions = document.createElement('div');
+      actions.className = 'ai-draft-actions';
+      const cancelBtn = document.createElement('button');
+      cancelBtn.type = 'button';
+      cancelBtn.textContent = 'Cancel';
+      const generateBtn = document.createElement('button');
+      generateBtn.type = 'submit';
+      generateBtn.textContent = 'Generate Draft';
+      actions.appendChild(cancelBtn);
+      actions.appendChild(generateBtn);
+
+      form.appendChild(topicLabel);
+      form.appendChild(topicInput);
+      form.appendChild(row);
+      form.appendChild(focusLabel);
+      form.appendChild(focusInput);
+      form.appendChild(generalPromptLabel);
+      form.appendChild(generalPromptInput);
+      form.appendChild(questionHintLabel);
+      form.appendChild(questionHintInput);
+      form.appendChild(descriptionHintLabel);
+      form.appendChild(descriptionHintInput);
+      form.appendChild(answerHintLabel);
+      form.appendChild(answerHintInput);
+      form.appendChild(providerWrap);
+      form.appendChild(note);
+      form.appendChild(actions);
+
+      modal.appendChild(title);
+      modal.appendChild(form);
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+
+      let done = false;
+      function close(result) {
+        if (done) return;
+        done = true;
+        document.removeEventListener('keydown', onKeyDown);
+        overlay.remove();
+        resolve(result);
+      }
+
+      function onKeyDown(event) {
+        if (event.key === 'Escape') close(null);
+      }
+
+      document.addEventListener('keydown', onKeyDown);
+
+      overlay.addEventListener('click', event => {
+        if (event.target === overlay) close(null);
+      });
+
+      cancelBtn.addEventListener('click', () => close(null));
+
+      form.addEventListener('submit', event => {
+        event.preventDefault();
+        const normalizedTopic = normalizeSpaces(topicInput.value) || 'General Knowledge';
+        const normalizedFocus = normalizeSpaces(focusInput.value || '');
+        const normalizedGeneralPrompt = normalizeSpaces(generalPromptInput.value || '');
+        const requestedType = normalizeRequestedType(typeSelect.value);
+        const includeMath = shouldAutoIncludeMath({
+          topic: normalizedTopic,
+          focus: normalizeSpaces([normalizedFocus, normalizedGeneralPrompt].filter(Boolean).join(' ')),
+          requestedType
+        });
+
+        close({
+          topic: normalizedTopic,
+          questionCount: clampNumber(countInput.value, 3, 20, 8),
+          requestedType,
+          difficulty: normalizeDifficulty(difficultySelect.value),
+          focus: normalizedFocus,
+          generalPrompt: normalizedGeneralPrompt,
+          includeMath,
+          useOpenAi: providerSelect.value === 'openai',
+          constraints: {
+            questionHint: normalizeSpaces(questionHintInput.value),
+            descriptionHint: normalizeSpaces(descriptionHintInput.value),
+            answerHint: normalizeSpaces(answerHintInput.value)
+          }
+        });
+      });
+
+      setTimeout(() => topicInput.focus(), 0);
+    });
   }
 
   function scoreQuestionQuality(question) {
@@ -439,6 +753,7 @@
     const topicLc = (context && context.topic ? context.topic : 'general knowledge').toLowerCase();
     const difficulty = context && context.difficulty ? context.difficulty : 'medium';
     const hint = context && context.answerHint ? context.answerHint : '';
+    const sameFacetTopic = isSameFacetAsTopic(facet, topicLc);
     const keyIdeas = (context && context.keyIdeas && context.keyIdeas.length)
       ? context.keyIdeas
       : [`${facet} explained in ${topicLc}`];
@@ -448,9 +763,15 @@
 
     if (!normalizeSpaces(q.text || '')) {
       if (q.type === 'matching') q.text = `Match ideas related to ${facet.toLowerCase()}.`;
-      else if (q.type === 'text') q.text = `Explain ${facet.toLowerCase()} in ${topicLc}.`;
-      else if (q.type === 'number') q.text = `What is a numeric value related to ${facet.toLowerCase()} in ${topicLc}?`;
-      else q.text = `Which statement best describes ${facet.toLowerCase()} in ${topicLc}?`;
+      else if (q.type === 'text') q.text = sameFacetTopic
+        ? `Explain key ideas about ${topicLc}.`
+        : `Explain ${facet.toLowerCase()} in ${topicLc}.`;
+      else if (q.type === 'number') q.text = sameFacetTopic
+        ? `What is a numeric value related to ${topicLc}?`
+        : `What is a numeric value related to ${facet.toLowerCase()} in ${topicLc}?`;
+      else q.text = sameFacetTopic
+        ? `Which statement best describes ${topicLc}?`
+        : `Which statement best describes ${facet.toLowerCase()} in ${topicLc}?`;
     }
 
     if (q.type === 'matching') {
@@ -474,7 +795,9 @@
     if (q.type === 'text') {
       const answers = Array.isArray(q.answer) ? q.answer : [q.answer];
       const merged = uniqueStrings([...answers, ...buildTextAnswers(facet, topicLc, hint)], 6);
-      q.answer = merged.length > 1 ? merged : [merged[0] || `${facet.toLowerCase()} in ${topicLc}`];
+      q.answer = merged.length > 1
+        ? merged
+        : [merged[0] || (sameFacetTopic ? `${topicLc} basics` : `${facet.toLowerCase()} in ${topicLc}`)];
       q.description = normalizeSpaces(q.description || '');
       return q;
     }
@@ -491,10 +814,41 @@
       return q;
     }
 
+    const normalizedOptions = uniqueStrings(Array.isArray(q.options) ? q.options : [], 10).slice(0, 4);
+    if (q.type === 'multiple') {
+      const existingCorrect = Number.isInteger(q.correct) ? q.correct : parseInt(q.correct, 10);
+      const validExisting = normalizedOptions.length >= 4
+        && Number.isInteger(existingCorrect)
+        && existingCorrect >= 0
+        && existingCorrect < normalizedOptions.length;
+      if (validExisting) {
+        q.options = normalizedOptions;
+        q.correct = existingCorrect;
+        q.description = normalizeSpaces(q.description || '');
+        return q;
+      }
+    }
+
+    if (q.type === 'multi') {
+      const existingCorrect = (Array.isArray(q.correct) ? q.correct : [])
+        .map(v => parseInt(v, 10))
+        .filter(v => Number.isInteger(v) && v >= 0 && v < normalizedOptions.length);
+      const uniqueCorrect = Array.from(new Set(existingCorrect));
+      const validExisting = normalizedOptions.length >= 4 && uniqueCorrect.length >= 1;
+      if (validExisting) {
+        q.options = normalizedOptions;
+        q.correct = uniqueCorrect;
+        q.description = normalizeSpaces(q.description || '');
+        return q;
+      }
+    }
+
     const rebuiltOptions = buildMultipleOptions(facet, topicLc, index, difficulty);
     const candidateOptions = uniqueStrings([...(Array.isArray(q.options) ? q.options : []), ...rebuiltOptions], 8);
     while (candidateOptions.length < 4) {
-      candidateOptions.push(`Additional statement ${candidateOptions.length + 1} about ${facet.toLowerCase()} in ${topicLc}.`);
+      candidateOptions.push(sameFacetTopic
+        ? `Additional statement ${candidateOptions.length + 1} about ${topicLc}.`
+        : `Additional statement ${candidateOptions.length + 1} about ${facet.toLowerCase()} in ${topicLc}.`);
     }
     q.options = candidateOptions.slice(0, 4);
 
@@ -526,12 +880,25 @@
       if (count > 0) q.text = `${base} (Variant ${count + 1})`;
 
       if (q.type === 'multiple' || q.type === 'multi') {
-        q.options = uniqueStrings(q.options || [], 6).slice(0, 4);
+        q.options = (Array.isArray(q.options) ? q.options : [])
+          .map(value => normalizeSpaces(value))
+          .filter(Boolean)
+          .slice(0, 4);
         while (q.options.length < 4) {
           q.options.push(`Additional option ${q.options.length + 1}.`);
         }
-        if (q.type === 'multiple') q.correct = 0;
-        else q.correct = [0, 2];
+        if (q.type === 'multiple') {
+          const existingCorrect = Number.isInteger(q.correct) ? q.correct : parseInt(q.correct, 10);
+          q.correct = (Number.isInteger(existingCorrect) && existingCorrect >= 0 && existingCorrect < q.options.length)
+            ? existingCorrect
+            : 0;
+        } else {
+          const existingCorrect = (Array.isArray(q.correct) ? q.correct : [])
+            .map(v => parseInt(v, 10))
+            .filter(v => Number.isInteger(v) && v >= 0 && v < q.options.length);
+          const uniqueCorrect = Array.from(new Set(existingCorrect));
+          q.correct = uniqueCorrect.length ? uniqueCorrect : [0, 2].filter(i => i < q.options.length);
+        }
       } else if (q.type === 'text') {
         const answers = Array.isArray(q.answer) ? q.answer : [q.answer];
         const cleaned = uniqueStrings(answers, 6);
@@ -705,7 +1072,9 @@
 
     function chooseQuestionType(index) {
       if (effectiveRules.requestedType) return effectiveRules.requestedType;
-      const rotation = ['multiple', 'multi', 'text', 'matching', 'number'];
+      const rotation = effectiveRules.equationQuiz
+        ? ['multiple', 'multi', 'text', 'matching', 'number']
+        : ['multiple', 'multi', 'text', 'matching'];
       return rotation[(index - 1) % rotation.length];
     }
 
@@ -749,15 +1118,24 @@
       }
 
       if (typeForThisQuestion === 'matching') {
+        const topicProfile = detectTopicProfile(topicLc);
         const stem = matchStems[(i - 1) % matchStems.length].replaceAll('%TOPIC%', topicLc);
-        const ideaA = units.keyIdeas[(i - 1) % units.keyIdeas.length] || `${facet} explained in ${topicLc}`;
-        const ideaB = units.keyIdeas[(i + 1) % units.keyIdeas.length] || `Example of ${facet.toLowerCase()} in ${topicLc}`;
-        const ideaC = units.keyIdeas[(i + 2) % units.keyIdeas.length] || `Common misunderstanding of ${facet.toLowerCase()} in ${topicLc}`;
+        const sameFacetTopic = isSameFacetAsTopic(facet, topicLc);
+        const topicSpecificPairs = buildTopicSpecificMatchingPairs(topicProfile);
+        const ideaA = units.keyIdeas[(i - 1) % units.keyIdeas.length] || (sameFacetTopic
+          ? `A core concept in ${topicLc}`
+          : `${facet} explained in ${topicLc}`);
+        const ideaB = units.keyIdeas[(i + 1) % units.keyIdeas.length] || (sameFacetTopic
+          ? `An example related to ${topicLc}`
+          : `Example of ${facet.toLowerCase()} in ${topicLc}`);
+        const ideaC = units.keyIdeas[(i + 2) % units.keyIdeas.length] || (sameFacetTopic
+          ? `A common misunderstanding about ${topicLc}`
+          : `Common misunderstanding of ${facet.toLowerCase()} in ${topicLc}`);
         questions.push({
           type: 'matching',
           text: ensureUniqueText(appendConstraintHint(stem, effectiveRules.constraints.questionHint)),
           description: appendConstraintHint('', effectiveRules.constraints.descriptionHint),
-          pairs: [
+          pairs: topicSpecificPairs || [
             { left: `${facet} principle`, right: ideaA },
             { left: `${facet} example`, right: ideaB },
             { left: `${facet} misconception`, right: ideaC }
@@ -767,27 +1145,46 @@
       }
 
       if (typeForThisQuestion === 'multi') {
+        const topicProfile = detectTopicProfile(topicLc);
         const stem = multiStems[(i - 1) % multiStems.length].replaceAll('%TOPIC%', topicLc);
-        const options = [
-          `${facet} supports better reasoning in ${topicLc}.`,
-          `${facet} always has only one fixed interpretation in ${topicLc}.`,
-          `${facet} can be improved through practice and feedback in ${topicLc}.`,
-          `${facet} is mostly unrelated to real scenarios in ${topicLc}.`
-        ];
+        const sameFacetTopic = isSameFacetAsTopic(facet, topicLc);
+        const topicSpecificMulti = buildTopicSpecificMultiOptions(topicProfile);
+        const options = topicSpecificMulti
+          ? topicSpecificMulti.options
+          : sameFacetTopic
+          ? [
+            `${topicLc} can be understood better through comparison and examples.`,
+            `${topicLc} always has only one fixed interpretation.`,
+            `Understanding ${topicLc} can improve with practice and feedback.`,
+            `${topicLc} is mostly unrelated to real scenarios.`
+          ]
+          : [
+            `${facet} supports better reasoning in ${topicLc}.`,
+            `${facet} always has only one fixed interpretation in ${topicLc}.`,
+            `${facet} can be improved through practice and feedback in ${topicLc}.`,
+            `${facet} is mostly unrelated to real scenarios in ${topicLc}.`
+          ];
         questions.push({
           type: 'multi',
           text: ensureUniqueText(appendConstraintHint(stem, effectiveRules.constraints.questionHint)),
           description: appendConstraintHint('Select all that apply.', effectiveRules.constraints.descriptionHint),
           options,
-          correct: [0, 2]
+          correct: topicSpecificMulti ? topicSpecificMulti.correct : [0, 2]
         });
         continue;
       }
 
       if (typeForThisQuestion === 'text') {
-        const stem = textStems[(i - 1) % textStems.length]
-          .replaceAll('%FACET%', facet.toLowerCase())
-          .replaceAll('%TOPIC%', topicLc);
+        const sameFacetTopic = isSameFacetAsTopic(facet, topicLc);
+        const stem = sameFacetTopic
+          ? [
+            `In your own words, explain key ideas about ${topicLc}.`,
+            `Write a short definition of core concepts in ${topicLc}.`,
+            `Briefly describe why ${topicLc} matters.`
+          ][(i - 1) % 3]
+          : textStems[(i - 1) % textStems.length]
+            .replaceAll('%FACET%', facet.toLowerCase())
+            .replaceAll('%TOPIC%', topicLc);
         const equationDesc = effectiveRules.equationInDescription ? `Equation to solve: ${i + 2} × ${i + 3}` : '';
         questions.push({
           type: 'text',
@@ -799,6 +1196,7 @@
       }
 
       if (typeForThisQuestion === 'number') {
+        const sameFacetTopic = isSameFacetAsTopic(facet, topicLc);
         const generatedEquation = buildEquationForNumberQuestion(i, effectiveRules.preferredOperation);
         const numericSeed = 10 + ((i * 7) % 31);
         const accepted = effectiveRules.equationQuiz
@@ -806,7 +1204,11 @@
           : [numericSeed, numericSeed + 0.5];
         questions.push({
           type: 'number',
-          text: ensureUniqueText(effectiveRules.equationQuiz ? 'Solve the equation.' : `Enter a numeric answer for ${facet.toLowerCase()} in ${topicLc}.`),
+          text: ensureUniqueText(effectiveRules.equationQuiz
+            ? 'Solve the equation.'
+            : (sameFacetTopic
+              ? `Enter a numeric answer related to ${topicLc}.`
+              : `Enter a numeric answer for ${facet.toLowerCase()} in ${topicLc}.`)),
           description: effectiveRules.equationQuiz
             ? generatedEquation.equation
             : 'Numeric response required.',
@@ -986,7 +1388,195 @@
     return parts.join('\n');
   }
 
-  function initAiQuizGenerator(applyQuizToEditor) {
+  function getDefaultAiSettings() {
+    return {
+      aiProvider: 'local',
+      openaiModel: 'gpt-4.1-mini',
+      openaiApiKey: '',
+      reviewGeneratedQuestions: true,
+      defaultDifficulty: 'medium',
+      defaultQuestionCount: 8
+    };
+  }
+
+  function readRuntimeAiSettings(options) {
+    const defaults = getDefaultAiSettings();
+    try {
+      if (options && typeof options.getUserSettings === 'function') {
+        const fromOption = options.getUserSettings();
+        return Object.assign({}, defaults, fromOption || {});
+      }
+
+      if (typeof window.readUserSettings === 'function') {
+        let userId = null;
+        if (typeof window.getCurrentUser === 'function') {
+          const cur = window.getCurrentUser();
+          userId = cur && cur.id ? cur.id : null;
+        }
+        return Object.assign({}, defaults, window.readUserSettings(userId) || {});
+      }
+    } catch (err) {
+      return defaults;
+    }
+    return defaults;
+  }
+
+  function shouldReviewGeneratedQuestions(settings) {
+    return !!(settings && settings.reviewGeneratedQuestions);
+  }
+
+  function stripCodeFences(text) {
+    const source = (text || '').trim();
+    if (!source.startsWith('```')) return source;
+    return source
+      .replace(/^```[a-zA-Z]*\s*/i, '')
+      .replace(/\s*```$/, '')
+      .trim();
+  }
+
+  function tryParseQuizJson(rawText) {
+    const cleaned = stripCodeFences(rawText);
+    try {
+      return JSON.parse(cleaned);
+    } catch (err) {
+      const start = cleaned.indexOf('{');
+      const end = cleaned.lastIndexOf('}');
+      if (start >= 0 && end > start) {
+        return JSON.parse(cleaned.slice(start, end + 1));
+      }
+      throw err;
+    }
+  }
+
+  function normalizeAiQuestionType(value) {
+    const t = (value || '').toLowerCase().trim();
+    if (t === 'multiple' || t === 'multi' || t === 'matching' || t === 'text' || t === 'number') return t;
+    if (t.startsWith('multiple')) return 'multiple';
+    if (t.startsWith('match')) return 'matching';
+    if (t.startsWith('num')) return 'number';
+    return 'multiple';
+  }
+
+  function normalizeQuizFromAiDraft(draft, context) {
+    const input = draft && typeof draft === 'object' ? draft : {};
+    const questions = Array.isArray(input.questions) ? input.questions : [];
+    const normalized = questions.map((raw, index) => {
+      const q = raw && typeof raw === 'object' ? Object.assign({}, raw) : {};
+      q.type = normalizeAiQuestionType(q.type || (context.requestedType || 'multiple'));
+
+      if (q.type === 'matching') {
+        const pairs = Array.isArray(q.pairs) ? q.pairs : [];
+        q.pairs = pairs.map(p => ({
+          left: normalizeSpaces((p && p.left) || ''),
+          right: normalizeSpaces((p && p.right) || '')
+        }));
+        delete q.options;
+        delete q.correct;
+        delete q.answer;
+      } else if (q.type === 'multi') {
+        q.options = Array.isArray(q.options) ? q.options.map(o => normalizeSpaces(o)) : [];
+        const correct = Array.isArray(q.correct) ? q.correct : [];
+        q.correct = correct
+          .map(v => parseInt(v, 10))
+          .filter(v => Number.isInteger(v));
+      } else if (q.type === 'multiple') {
+        q.options = Array.isArray(q.options) ? q.options.map(o => normalizeSpaces(o)) : [];
+        const correctIndex = Number.isInteger(q.correct) ? q.correct : parseInt(q.correct, 10);
+        q.correct = Number.isInteger(correctIndex) ? correctIndex : 0;
+      } else if (q.type === 'number') {
+        const arr = Array.isArray(q.answer) ? q.answer : [q.answer];
+        const nums = arr.map(v => (typeof v === 'number' ? v : parseFloat(v))).filter(v => Number.isFinite(v));
+        q.answer = nums.length <= 1 ? (nums[0] != null ? nums[0] : 0) : nums;
+      } else {
+        const answers = Array.isArray(q.answer) ? q.answer : [q.answer];
+        const cleaned = answers.map(a => normalizeSpaces(a)).filter(Boolean);
+        q.answer = cleaned.length <= 1 ? (cleaned[0] || '') : cleaned;
+      }
+
+      q.text = normalizeSpaces(q.text || `Question ${index + 1}`);
+      q.description = normalizeSpaces(q.description || '');
+      return q;
+    });
+
+    const optimized = optimizeQuizQuestions(normalized, {
+      topic: context.topic,
+      facets: context.facets,
+      keyIdeas: context.keyIdeas,
+      difficulty: context.difficulty,
+      answerHint: context.answerHint,
+      defaultType: context.requestedType || 'multiple'
+    });
+
+    const titleBase = normalizeSpaces(input.title || `${context.topic} Quiz (Draft)`);
+    const descriptionBase = normalizeSpaces(input.description || context.description);
+
+    return {
+      title: titleBase,
+      description: descriptionBase,
+      showQuestionResults: true,
+      showCorrectAnswersForIncorrect: false,
+      questions: optimized
+    };
+  }
+
+  async function callOpenAiForQuiz({ model, apiKey, systemPrompt, userPrompt, context }) {
+    if (!apiKey) throw new Error('OpenAI API key is required. Add it in Profile settings.');
+
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model: model || 'gpt-4.1-mini',
+        temperature: 0.2,
+        response_format: { type: 'json_object' },
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt }
+        ]
+      })
+    });
+
+    const data = await response.json();
+    if (!response.ok) {
+      const message = data && data.error && data.error.message
+        ? data.error.message
+        : 'OpenAI request failed';
+      throw new Error(message);
+    }
+
+    const content = data
+      && data.choices
+      && data.choices[0]
+      && data.choices[0].message
+      && typeof data.choices[0].message.content === 'string'
+      ? data.choices[0].message.content
+      : '';
+
+    if (!content.trim()) throw new Error('OpenAI returned an empty response');
+    const parsed = tryParseQuizJson(content);
+    return normalizeQuizFromAiDraft(parsed, context);
+  }
+
+  function buildOpenAiPromptFromConfig(config, prompt) {
+    const typeLabel = config.requestedType || 'mixed';
+    const domainGuidance = 'Domain guidance: Stay within the user topic and focus. If uncertain about niche facts, prefer conceptual/practical questions rather than specific trivia.';
+
+    return `Create a quiz as strict JSON only.\nTopic: ${config.topic}\nQuestion count: ${config.questionCount}\nRequested type: ${typeLabel}\nDifficulty: ${config.difficulty}\nFocus: ${config.focus || 'none'}\nInclude math/equations: ${config.includeMath ? 'yes' : 'no'}\nPrompt summary: ${prompt}\n${domainGuidance}\nCorrectness rules: (1) Every question must have factually consistent answer key. (2) For multiple, correct must point to exactly one true option. (3) For multi, correct must include all and only true options. (4) Do not output placeholder answers like "topic basics". (5) Ensure options are semantically distinct and not contradictory.`;
+  }
+
+  function buildOpenAiPromptFromStudyText(fileName, studyText) {
+    const clipped = (studyText || '').slice(0, 14000);
+    return `Create a quiz as strict JSON only from this study guide text.\nFile name: ${fileName}\nUse 6 to 12 questions depending on content coverage.\nMix question types naturally: multiple, multi, matching, text, and number when appropriate.\nCorrectness rules: keep answer keys strictly consistent with the source text; if source lacks a specific fact, ask a conceptual question supported by the source instead of guessing.\nStudy text:\n${clipped}`;
+  }
+
+  function openAiSystemPrompt() {
+    return 'You generate educational quizzes and must output ONLY valid JSON with shape: {"title":string,"description":string,"questions":[{"type":"multiple|multi|matching|text|number","text":string,"description":string,"options"?:string[],"correct"?:number|number[],"answer"?:string|string[]|number|number[],"pairs"?:[{"left":string,"right":string}]}]}. For multiple/multi include at least 4 options. For matching include at least 3 pairs. No markdown fences. Prioritize factual correctness over creativity. Never fabricate specific lore/trivia when uncertain; instead produce conceptual or mechanics-focused questions that remain correct. Verify each correct index maps to the intended option text before returning JSON.';
+  }
+
+  function initAiQuizGenerator(applyQuizToEditor, options = {}) {
     const buttonEl = byId('ai-generate-btn');
     const pdfInputEl = byId('ai-pdf-file');
     const pdfButtonEl = byId('ai-generate-pdf-btn');
@@ -994,26 +1584,65 @@
     if (!buttonEl || !statusEl || typeof applyQuizToEditor !== 'function') return;
 
     buttonEl.addEventListener('click', async () => {
-      const config = askDraftQuizConfig();
+      const settings = readRuntimeAiSettings(options);
+      const config = await askDraftQuizConfig(settings);
       if (!config) {
         statusEl.textContent = 'Draft generation canceled.';
         return;
       }
 
-      const prompt = normalizeSpaces([config.topic, config.focus].filter(Boolean).join(' — '));
+      const prompt = normalizeSpaces(
+        config.generalPrompt || [config.topic, config.focus].filter(Boolean).join(' — ') || config.topic
+      );
+      const useOpenAi = !!config.useOpenAi;
+      const reviewEnabled = shouldReviewGeneratedQuestions(settings);
 
       buttonEl.disabled = true;
       const originalText = buttonEl.textContent;
       buttonEl.textContent = 'Generating...';
-      statusEl.textContent = 'Generating quiz locally...';
+      statusEl.textContent = useOpenAi ? 'Generating quiz with OpenAI...' : 'Generating quiz locally...';
 
-      buttonEl.disabled = false;
-      buttonEl.textContent = originalText;
+      try {
+        let quiz;
+        if (useOpenAi) {
+          if (!normalizeSpaces(settings.openaiApiKey || '')) {
+            throw new Error('OpenAI is selected, but no API key is saved. Add it in Profile settings.');
+          }
 
-      const quiz = buildLocalQuizFromPrompt(prompt, config);
-      const reviewedQuiz = reviewQuizWithPrompts(quiz);
-      applyQuizToEditor(reviewedQuiz);
-      statusEl.textContent = `Generated ${quiz.questions.length} question(s) locally. Review and save when ready.`;
+          const context = {
+            topic: config.topic,
+            facets: extractPromptFacets(prompt),
+            keyIdeas: splitPromptSegments(prompt),
+            difficulty: config.difficulty,
+            answerHint: config.constraints && config.constraints.answerHint ? config.constraints.answerHint : '',
+            requestedType: config.requestedType,
+            description: `Draft generated from OpenAI prompt for ${config.topic}. Review and edit wording/answers before publishing.`
+          };
+
+          quiz = await callOpenAiForQuiz({
+            model: settings.openaiModel,
+            apiKey: settings.openaiApiKey,
+            systemPrompt: openAiSystemPrompt(),
+            userPrompt: buildOpenAiPromptFromConfig(config, prompt),
+            context
+          });
+        } else {
+          quiz = buildLocalQuizFromPrompt(prompt, config);
+        }
+
+        const finalQuiz = reviewEnabled ? reviewQuizWithPrompts(quiz) : quiz;
+        applyQuizToEditor(finalQuiz);
+        statusEl.textContent = useOpenAi
+          ? `Generated ${quiz.questions.length} question(s) with OpenAI. Review and save when ready.`
+          : `Generated ${quiz.questions.length} question(s) locally. Review and save when ready.`;
+      } catch (err) {
+        const msg = err && err.message ? err.message : 'Failed to generate quiz';
+        statusEl.textContent = msg;
+        alert(msg);
+      } finally {
+        buttonEl.disabled = false;
+        buttonEl.textContent = originalText;
+      }
     });
 
     if (pdfInputEl && pdfButtonEl) {
@@ -1028,10 +1657,14 @@
           return;
         }
 
+        const settings = readRuntimeAiSettings(options);
+        const useOpenAi = (settings.aiProvider || 'local') === 'openai';
+        const reviewEnabled = shouldReviewGeneratedQuestions(settings);
+
         pdfButtonEl.disabled = true;
         const originalPdfBtnText = pdfButtonEl.textContent;
         pdfButtonEl.textContent = 'Reading PDF...';
-        statusEl.textContent = 'Extracting text from PDF...';
+        statusEl.textContent = useOpenAi ? 'Extracting text from PDF for OpenAI...' : 'Extracting text from PDF...';
 
         try {
           const studyText = await extractTextFromPdfFile(file);
@@ -1039,10 +1672,38 @@
             throw new Error('Could not read enough text from this PDF.');
           }
 
-          const quiz = buildLocalQuizFromStudyText(studyText, file.name);
-          const reviewedQuiz = reviewQuizWithPrompts(quiz);
-          applyQuizToEditor(reviewedQuiz);
-          statusEl.textContent = `Generated ${quiz.questions.length} question(s) from ${file.name}. Review and save when ready.`;
+          let quiz;
+          if (useOpenAi) {
+            if (!normalizeSpaces(settings.openaiApiKey || '')) {
+              throw new Error('OpenAI is selected, but no API key is saved. Add it in Profile settings.');
+            }
+
+            const context = {
+              topic: capitalizeWords((file.name || '').replace(/\.pdf$/i, '')) || 'Study Guide',
+              facets: keywordCandidates(studyText).map(capitalizeWords),
+              keyIdeas: createTextSummaryParts(studyText),
+              difficulty: normalizeDifficulty(settings.defaultDifficulty || 'medium'),
+              answerHint: '',
+              requestedType: null,
+              description: `Draft generated from OpenAI using ${file.name}. Review and edit wording/answers before publishing.`
+            };
+
+            quiz = await callOpenAiForQuiz({
+              model: settings.openaiModel,
+              apiKey: settings.openaiApiKey,
+              systemPrompt: openAiSystemPrompt(),
+              userPrompt: buildOpenAiPromptFromStudyText(file.name, studyText),
+              context
+            });
+          } else {
+            quiz = buildLocalQuizFromStudyText(studyText, file.name);
+          }
+
+          const finalQuiz = reviewEnabled ? reviewQuizWithPrompts(quiz) : quiz;
+          applyQuizToEditor(finalQuiz);
+          statusEl.textContent = useOpenAi
+            ? `Generated ${quiz.questions.length} question(s) from ${file.name} with OpenAI. Review and save when ready.`
+            : `Generated ${quiz.questions.length} question(s) from ${file.name}. Review and save when ready.`;
         } catch (err) {
           const msg = (err && err.message) ? err.message : 'Failed to generate quiz from PDF';
           statusEl.textContent = msg;

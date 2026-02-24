@@ -430,9 +430,34 @@ function applyQuizToEditor(quiz) {
   if (questions.length === 0) addQuestionBlock();
 }
 
+function pickQuizFromJsonPayload(payload) {
+  if (!payload) return null;
+  if (Array.isArray(payload)) return payload.length ? payload[0] : null;
+  if (Array.isArray(payload.quizzes)) return payload.quizzes.length ? payload.quizzes[0] : null;
+  if (payload.quiz && typeof payload.quiz === 'object') return payload.quiz;
+  if (payload.questions && Array.isArray(payload.questions)) return payload;
+  return null;
+}
+
+function normalizeImportedQuiz(quiz) {
+  const base = quiz && typeof quiz === 'object' ? quiz : {};
+  return {
+    title: (base.title || 'Imported Quiz').toString(),
+    description: base.description || '',
+    showQuestionResults: !!base.showQuestionResults,
+    showCorrectAnswersForIncorrect: !!base.showCorrectAnswersForIncorrect,
+    questions: Array.isArray(base.questions) ? base.questions : []
+  };
+}
+
 function initAiQuizGenerator() {
   if (!window.AIQuiz || typeof window.AIQuiz.initAiQuizGenerator !== 'function') return;
-  window.AIQuiz.initAiQuizGenerator(applyQuizToEditor);
+  window.AIQuiz.initAiQuizGenerator(applyQuizToEditor, {
+    getUserSettings: () => {
+      const cur = getCurrentUser();
+      return readUserSettings(cur ? cur.id : null);
+    }
+  });
 }
 
 async function refreshQuizList() {
@@ -553,6 +578,39 @@ async function login() {
 
 function logout() { setCurrentUser(null); }
 
+function getUserSettingsStorageKey(userId) {
+  return 'quiz_settings_' + (userId || 'guest');
+}
+
+function getDefaultUserSettings() {
+  return {
+    aiProvider: 'local',
+    openaiModel: 'gpt-4.1-mini',
+    openaiApiKey: '',
+    reviewGeneratedQuestions: true,
+    defaultDifficulty: 'medium',
+    defaultQuestionCount: 8
+  };
+}
+
+function readUserSettings(userId) {
+  const defaults = getDefaultUserSettings();
+  try {
+    const raw = localStorage.getItem(getUserSettingsStorageKey(userId));
+    if (!raw) return defaults;
+    const parsed = JSON.parse(raw);
+    return Object.assign({}, defaults, parsed || {});
+  } catch (err) {
+    return defaults;
+  }
+}
+
+function writeUserSettings(userId, settings) {
+  const merged = Object.assign({}, getDefaultUserSettings(), settings || {});
+  localStorage.setItem(getUserSettingsStorageKey(userId), JSON.stringify(merged));
+  return merged;
+}
+
 let editingId = null;
 
 async function editQuiz(id) {
@@ -582,10 +640,12 @@ function loadQuiz(id) {
     const takeDesc = $('take-desc');
     const form = $('take-form');
     const feedbackHost = $('submission-feedback');
+    const downloadBtn = $('download-quiz-btn');
     if (!form) return;
     form.innerHTML = '';
     if (feedbackHost) feedbackHost.innerHTML = '';
     if (takeAuthor) takeAuthor.innerHTML = '';
+    if (downloadBtn) downloadBtn.onclick = null;
     if (!q || q.error) {
       if (takeTitle) takeTitle.textContent = 'Quiz not found';
       if (takeDesc) takeDesc.textContent = q && q.error ? q.error : '';
@@ -593,6 +653,31 @@ function loadQuiz(id) {
     }
     if (takeTitle) takeTitle.textContent = q.title || 'Untitled Quiz';
     if (takeDesc) takeDesc.innerHTML = renderMarkdown(q.description);
+
+    if (downloadBtn) {
+      downloadBtn.onclick = () => {
+        const exportPayload = {
+          id: q.id,
+          title: q.title,
+          description: q.description || '',
+          owner: q.owner || null,
+          showQuestionResults: !!q.showQuestionResults,
+          showCorrectAnswersForIncorrect: !!q.showCorrectAnswersForIncorrect,
+          questions: Array.isArray(q.questions) ? q.questions : []
+        };
+        const text = JSON.stringify(exportPayload, null, 2);
+        const blob = new Blob([text], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        const safeName = (q.title || 'quiz').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'quiz';
+        a.href = url;
+        a.download = safeName + '.json';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      };
+    }
 
     if (takeAuthor) {
       if (q.owner) {
@@ -880,37 +965,36 @@ const signupBtn = $('signup'); if (signupBtn) signupBtn.addEventListener('click'
 const loginBtn = $('login'); if (loginBtn) loginBtn.addEventListener('click', login);
 const logoutBtn = $('logout'); if (logoutBtn) logoutBtn.addEventListener('click', logout);
 
-// export/import
-const exportBtn = $('export-quizzes'); if (exportBtn) exportBtn.addEventListener('click', async () => {
-  const res = await fetch('/api/export');
-  const text = await res.text();
-  const blob = new Blob([text], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = 'quizzes-export.json';
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
-});
-const importFile = $('import-file'); if (importFile) importFile.addEventListener('change', async (e) => {
-  const f = e.target.files[0];
-  if (!f) return;
-  const txt = await f.text();
-  try {
-    const parsed = JSON.parse(txt);
-    // accept either array or { quizzes: [] }
-    const quizzes = Array.isArray(parsed) ? parsed : (parsed.quizzes || []);
-    if (!Array.isArray(quizzes)) return alert('Invalid file');
-    const res = await api('/api/import', { method: 'POST', body: JSON.stringify({ quizzes }) });
-    alert(`Imported ${res.added || 0} quizzes`);
-    refreshQuizList();
-  } catch (err) { alert('Invalid JSON file'); }
-});
-
 // search
 const searchBtn = $('search-btn'); if (searchBtn) searchBtn.addEventListener('click', () => refreshQuizList());
+
+const jsonQuizFile = $('json-quiz-file');
+const jsonLoadBtn = $('json-load-btn');
+if (jsonLoadBtn && jsonQuizFile) {
+  jsonLoadBtn.addEventListener('click', async () => {
+    const file = jsonQuizFile.files && jsonQuizFile.files[0] ? jsonQuizFile.files[0] : null;
+    if (!file) {
+      alert('Choose a JSON file first.');
+      return;
+    }
+
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      const pickedQuiz = pickQuizFromJsonPayload(parsed);
+      if (!pickedQuiz || !Array.isArray(pickedQuiz.questions)) {
+        alert('Invalid quiz JSON. Expected an object with a questions array.');
+        return;
+      }
+      const normalizedQuiz = normalizeImportedQuiz(pickedQuiz);
+      applyQuizToEditor(normalizedQuiz);
+      const statusEl = $('ai-generate-status');
+      if (statusEl) statusEl.textContent = `Loaded draft from ${file.name}.`;
+    } catch (err) {
+      alert('Could not parse JSON file.');
+    }
+  });
+}
 
 // theme toggle
 const themeToggle = $('theme-toggle'); if (themeToggle) themeToggle.addEventListener('click', () => {
@@ -933,6 +1017,99 @@ async function initProfilePage() {
   const uname = $('profile-username'); if (uname) uname.textContent = userObj ? userObj.username : (profile.username || 'User');
   const avg = $('profile-avg'); if (avg) avg.textContent = profile.averageScore || 0;
   const cnt = $('profile-count'); if (cnt) cnt.textContent = profile.quizCount || 0;
+
+  const profileTabMain = $('profile-tab-profile');
+  const profileTabSettings = $('profile-tab-settings');
+  const panelMain = $('profile-panel-main');
+  const panelSettings = $('profile-panel-settings');
+  const isOwnProfile = !!(cur && cur.id === userId);
+
+  function setActiveProfileTab(tabName) {
+    if (!panelMain || !panelSettings || !profileTabMain || !profileTabSettings) return;
+    const showSettings = tabName === 'settings' && isOwnProfile;
+    panelMain.classList.toggle('hidden', showSettings);
+    panelSettings.classList.toggle('hidden', !showSettings);
+    profileTabMain.classList.toggle('active', !showSettings);
+    profileTabSettings.classList.toggle('active', showSettings);
+  }
+
+  if (profileTabMain) profileTabMain.addEventListener('click', () => setActiveProfileTab('profile'));
+  if (profileTabSettings) profileTabSettings.addEventListener('click', () => setActiveProfileTab('settings'));
+
+  if (profileTabSettings && !isOwnProfile) {
+    profileTabSettings.classList.add('hidden');
+  }
+
+  const aiProviderEl = $('settings-ai-provider');
+  const openAiWrapEl = $('settings-openai-wrap');
+  const openAiModelEl = $('settings-openai-model');
+  const openAiKeyEl = $('settings-openai-key');
+  const defaultDifficultyEl = $('settings-default-difficulty');
+  const defaultCountEl = $('settings-default-count');
+  const reviewPromptsEl = $('settings-review-prompts');
+  const saveSettingsBtn = $('settings-save');
+  const settingsStatusEl = $('settings-status');
+
+  function toggleOpenAiSettings() {
+    if (!aiProviderEl || !openAiWrapEl) return;
+    const isOpenAi = aiProviderEl.value === 'openai';
+    openAiWrapEl.classList.toggle('hidden', !isOpenAi);
+  }
+
+  if (isOwnProfile && aiProviderEl && openAiModelEl && openAiKeyEl && defaultDifficultyEl && defaultCountEl && reviewPromptsEl) {
+    const settings = readUserSettings(userId);
+    aiProviderEl.value = settings.aiProvider === 'openai' ? 'openai' : 'local';
+    openAiModelEl.value = settings.openaiModel || 'gpt-4.1-mini';
+    openAiKeyEl.value = settings.openaiApiKey || '';
+    defaultDifficultyEl.value = (settings.defaultDifficulty === 'easy' || settings.defaultDifficulty === 'medium' || settings.defaultDifficulty === 'hard')
+      ? settings.defaultDifficulty
+      : 'medium';
+    defaultCountEl.value = String(Number.isFinite(parseInt(settings.defaultQuestionCount, 10)) ? parseInt(settings.defaultQuestionCount, 10) : 8);
+    reviewPromptsEl.checked = settings.reviewGeneratedQuestions !== false;
+    toggleOpenAiSettings();
+
+    if (aiProviderEl) {
+      aiProviderEl.addEventListener('change', () => {
+        toggleOpenAiSettings();
+        if (settingsStatusEl) settingsStatusEl.textContent = '';
+      });
+    }
+
+    if (saveSettingsBtn) {
+      saveSettingsBtn.addEventListener('click', () => {
+        const provider = aiProviderEl.value === 'openai' ? 'openai' : 'local';
+        const openaiModel = (openAiModelEl.value || '').trim() || 'gpt-4.1-mini';
+        const openaiApiKey = (openAiKeyEl.value || '').trim();
+        const defaultDifficulty = (defaultDifficultyEl.value || 'medium').trim().toLowerCase();
+        const parsedCount = parseInt(defaultCountEl.value, 10);
+        const defaultQuestionCount = Number.isFinite(parsedCount) ? Math.max(3, Math.min(20, parsedCount)) : 8;
+        const reviewGeneratedQuestions = !!reviewPromptsEl.checked;
+
+        if (provider === 'openai' && !openaiApiKey) {
+          if (settingsStatusEl) settingsStatusEl.textContent = 'OpenAI API key is required when provider is OpenAI.';
+          return;
+        }
+
+        writeUserSettings(userId, {
+          aiProvider: provider,
+          openaiModel,
+          openaiApiKey,
+          defaultDifficulty: ['easy', 'medium', 'hard'].includes(defaultDifficulty) ? defaultDifficulty : 'medium',
+          defaultQuestionCount,
+          reviewGeneratedQuestions
+        });
+
+        if (settingsStatusEl) settingsStatusEl.textContent = 'Settings saved.';
+      });
+    }
+  }
+
+  if (settingsStatusEl && !isOwnProfile) {
+    settingsStatusEl.textContent = 'Settings are only available on your own profile.';
+  }
+
+  setActiveProfileTab('profile');
+
   const avatarImg = $('profile-avatar'); if (avatarImg) {
     // set fallback in case avatar URL is broken
     avatarImg.onerror = () => { avatarImg.src = 'default-avatar.png'; };
@@ -979,7 +1156,7 @@ async function initProfilePage() {
   }
 
   const uploadForm = $('avatar-form');
-  if (!cur || cur.id !== userId) {
+  if (!isOwnProfile) {
     if (uploadForm) uploadForm.style.display = 'none';
   } else {
     const uploadBtn = $('upload-avatar'); if (uploadBtn) uploadBtn.addEventListener('click', async (e) => {

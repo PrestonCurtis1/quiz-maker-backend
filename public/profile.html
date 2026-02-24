@@ -19,25 +19,69 @@
   </header>
   <main>
     <section id="profile-page">
-      <div id="profile-info">
-        <img id="profile-avatar" src="default-avatar.png" alt="avatar" style="width:96px;height:96px;border-radius:8px" />
-        <div>
-          <h2 id="profile-username"></h2>
-          <div>Average score: <span id="profile-avg">0</span>%</div>
-          <div>Quizzes taken: <span id="profile-count">0</span></div>
-        </div>
+      <div class="profile-tabs">
+        <button id="profile-tab-profile" type="button" class="active">Profile</button>
+        <button id="profile-tab-settings" type="button">Settings</button>
       </div>
-      <form id="avatar-form" enctype="multipart/form-data">
-        <label>Upload avatar</label>
-        <input id="avatar-file" name="avatar" type="file" accept="image/*" />
-        <button id="upload-avatar">Upload</button>
-      </form>
 
-      <h3>Quizzes</h3>
-      <ul id="user-quizzes"></ul>
+      <div id="profile-panel-main">
+        <div id="profile-info">
+          <img id="profile-avatar" src="default-avatar.png" alt="avatar" style="width:96px;height:96px;border-radius:8px" />
+          <div>
+            <h2 id="profile-username"></h2>
+            <div>Average score: <span id="profile-avg">0</span>%</div>
+            <div>Quizzes taken: <span id="profile-count">0</span></div>
+          </div>
+        </div>
 
-      <h3>Results</h3>
-      <ul id="user-results"></ul>
+        <form id="avatar-form" enctype="multipart/form-data">
+          <label>Upload avatar</label>
+          <input id="avatar-file" name="avatar" type="file" accept="image/*" />
+          <button id="upload-avatar">Upload</button>
+        </form>
+
+        <h3>Quizzes</h3>
+        <ul id="user-quizzes"></ul>
+
+        <h3>Results</h3>
+        <ul id="user-results"></ul>
+      </div>
+
+      <div id="profile-panel-settings" class="hidden">
+        <h3>AI Generation Settings</h3>
+
+        <label for="settings-ai-provider">AI Provider</label>
+        <select id="settings-ai-provider">
+          <option value="local">Local AI</option>
+          <option value="openai">OpenAI</option>
+        </select>
+
+        <div id="settings-openai-wrap" class="hidden">
+          <label for="settings-openai-model">OpenAI Model</label>
+          <input id="settings-openai-model" type="text" placeholder="gpt-4.1-mini" />
+
+          <label for="settings-openai-key">OpenAI API Key</label>
+          <input id="settings-openai-key" type="password" placeholder="sk-..." autocomplete="off" />
+        </div>
+
+        <label for="settings-default-difficulty">Default Difficulty</label>
+        <select id="settings-default-difficulty">
+          <option value="easy">Easy</option>
+          <option value="medium">Medium</option>
+          <option value="hard">Hard</option>
+        </select>
+
+        <label for="settings-default-count">Default Question Count (3-20)</label>
+        <input id="settings-default-count" type="number" min="3" max="20" value="8" />
+
+        <label class="editor-option">
+          <input id="settings-review-prompts" type="checkbox" checked />
+          Review each generated question/answer with prompts before applying
+        </label>
+
+        <button id="settings-save" type="button">Save Settings</button>
+        <div id="settings-status" class="q-help"></div>
+      </div>
     </section>
   </main>
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>

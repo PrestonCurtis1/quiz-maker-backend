@@ -255,35 +255,6 @@ app.put('/api/quizzes/:id', async (req, res) => {
   res.json({ ok: true });
 });
 
-app.post('/api/import', async (req, res) => {
-  const { quizzes } = req.body;
-  if (!Array.isArray(quizzes)) return res.status(400).json({ error: 'Invalid payload' });
-  const data = await readData();
-  let added = 0;
-  for (const q of quizzes) {
-    if (!q.title || !Array.isArray(q.questions)) continue;
-    const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-    data.push({
-      id,
-      title: q.title,
-      questions: q.questions,
-      owner: q.owner || null,
-      description: q.description || '',
-      showQuestionResults: !!q.showQuestionResults,
-      showCorrectAnswersForIncorrect: !!q.showCorrectAnswersForIncorrect
-    });
-    added++;
-  }
-  await writeData(data);
-  res.json({ added });
-});
-
-app.get('/api/export', async (req, res) => {
-  const data = await readData();
-  res.setHeader('Content-Type', 'application/json');
-  res.send(JSON.stringify(data, null, 2));
-});
-
 // simple user endpoints (demo only)
 app.post('/api/users/signup', async (req, res) => {
   const { username, password } = req.body;
