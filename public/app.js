@@ -42,51 +42,397 @@ function renderMarkdown(md) {
   return md;
 }
 
-function makeQuestionBlock(index) {
+function renumberQuestionBlocks() {
+  const blocks = Array.from(document.querySelectorAll('.question-block'));
+  blocks.forEach((block, idx) => {
+    const label = block.querySelector('.q-label');
+    if (label) label.textContent = 'Question ' + (idx + 1);
+  });
+}
+
+function extractQuestionDraft(block) {
+  const text = block.querySelector('.q-text').value.trim();
+  const description = block.querySelector('.q-desc').value.trim();
+  const type = block.querySelector('.q-type').value;
+  const options = Array.from(block.querySelectorAll('.q-option-input')).map(i => i.value.trim()).filter(Boolean);
+  let correct = null;
+  let correctMulti = [];
+  if (type === 'multiple') {
+    const selected = block.querySelector('input.q-correct-choice-single:checked');
+    correct = selected ? parseInt(selected.value, 10) : null;
+  } else if (type === 'multi') {
+    correctMulti = Array.from(block.querySelectorAll('input.q-correct-choice-multi:checked'))
+      .map(n => parseInt(n.value, 10))
+      .filter(n => Number.isFinite(n));
+  }
+  const pairs = Array.from(block.querySelectorAll('.q-pair-row')).map(row => ({
+    left: (row.querySelector('.q-pair-left') ? row.querySelector('.q-pair-left').value : '').trim(),
+    right: (row.querySelector('.q-pair-right') ? row.querySelector('.q-pair-right').value : '').trim()
+  })).filter(p => p.left || p.right);
+  const answers = Array.from(block.querySelectorAll('.q-answer-input')).map(i => i.value.trim()).filter(Boolean);
+
+  return {
+    type,
+    text,
+    description,
+    options,
+    correct: Number.isFinite(correct) ? correct : null,
+    correctMulti,
+    pairs,
+    answers
+  };
+}
+
+function validateQuestionDraft(draft, questionNumber) {
+  const errors = [];
+  if (!draft.text) errors.push(`Question ${questionNumber}: question text is required.`);
+
+  if (draft.type === 'multiple') {
+    if (draft.options.length < 2) errors.push(`Question ${questionNumber}: add at least 2 options.`);
+    if (!Number.isFinite(draft.correct)) {
+      errors.push(`Question ${questionNumber}: set the correct option number.`);
+    } else if (draft.correct < 0 || draft.correct >= draft.options.length) {
+      errors.push(`Question ${questionNumber}: correct option number must be between 1 and ${Math.max(1, draft.options.length)}.`);
+    }
+  } else if (draft.type === 'multi') {
+    if (draft.options.length < 2) errors.push(`Question ${questionNumber}: add at least 2 options.`);
+    if (draft.correctMulti.length === 0) errors.push(`Question ${questionNumber}: add at least one correct option number.`);
+    const invalid = draft.correctMulti.find(i => i < 0 || i >= draft.options.length);
+    if (invalid != null) errors.push(`Question ${questionNumber}: option number ${invalid + 1} is out of range.`);
+  } else if (draft.type === 'matching') {
+    if (draft.pairs.length === 0) errors.push(`Question ${questionNumber}: add at least one pair.`);
+    const incomplete = draft.pairs.find(p => !p.left || !p.right);
+    if (incomplete) errors.push(`Question ${questionNumber}: each pair must include both left and right values.`);
+  } else if (draft.type === 'text') {
+    if (!draft.answers || draft.answers.length === 0) errors.push(`Question ${questionNumber}: add at least one correct answer.`);
+  } else if (draft.type === 'number') {
+    if (!draft.answers || draft.answers.length === 0) {
+      errors.push(`Question ${questionNumber}: add at least one correct number.`);
+    } else {
+      const invalid = draft.answers.find(value => !Number.isFinite(parseFloat(value)));
+      if (invalid != null) errors.push(`Question ${questionNumber}: all correct answers must be valid numbers.`);
+    }
+  }
+
+  return errors;
+}
+
+function draftToQuestion(draft) {
+  if (draft.type === 'matching') {
+    return { type: 'matching', text: draft.text, description: draft.description, pairs: draft.pairs };
+  }
+  if (draft.type === 'multi') {
+    return { type: 'multi', text: draft.text, description: draft.description, options: draft.options, correct: draft.correctMulti };
+  }
+  if (draft.type === 'text') {
+    return { type: 'text', text: draft.text, description: draft.description, answer: draft.answers.length === 1 ? draft.answers[0] : draft.answers };
+  }
+  if (draft.type === 'number') {
+    const values = (draft.answers || []).map(value => parseFloat(value)).filter(value => Number.isFinite(value));
+    return { type: 'number', text: draft.text, description: draft.description, answer: values.length === 1 ? values[0] : values };
+  }
+  return { type: 'multiple', text: draft.text, description: draft.description, options: draft.options, correct: draft.correct };
+}
+
+function collectAndValidateQuestions(blocks) {
+  const questions = [];
+  const errors = [];
+
+  blocks.forEach((block, idx) => {
+    const draft = extractQuestionDraft(block);
+    errors.push(...validateQuestionDraft(draft, idx + 1));
+    questions.push(draftToQuestion(draft));
+  });
+
+  return { questions, errors };
+}
+
+function makeQuestionBlock(index, initialData = null) {
   const container = el('div', { class: 'question-block' });
-  const qLabel = el('label', {}, [ 'Question ' + (index + 1) ]);
+  const header = el('div', { class: 'question-header' });
+  const qLabel = el('label', { class: 'q-label' }, [ 'Question ' + (index + 1) ]);
+  const actions = el('div', { class: 'question-actions' });
+
+  const moveUp = el('button', { type: 'button', onclick: () => {
+    const prev = container.previousElementSibling;
+    if (!prev) return;
+    container.parentNode.insertBefore(container, prev);
+    renumberQuestionBlocks();
+  } }, [ '↑' ]);
+  const moveDown = el('button', { type: 'button', onclick: () => {
+    const next = container.nextElementSibling;
+    if (!next) return;
+    container.parentNode.insertBefore(next, container);
+    renumberQuestionBlocks();
+  } }, [ '↓' ]);
+  const duplicate = el('button', { type: 'button', onclick: () => {
+    const draft = extractQuestionDraft(container);
+    const copy = makeQuestionBlock(index + 1, draft);
+    container.parentNode.insertBefore(copy, container.nextSibling);
+    renumberQuestionBlocks();
+  } }, [ 'Duplicate' ]);
+  const remove = el('button', { type: 'button', onclick: () => {
+    container.remove();
+    renumberQuestionBlocks();
+  } }, [ 'Remove' ]);
+
+  actions.appendChild(moveUp);
+  actions.appendChild(moveDown);
+  actions.appendChild(duplicate);
+  actions.appendChild(remove);
+  header.appendChild(qLabel);
+  header.appendChild(actions);
+
   const qInput = el('input', { placeholder: 'Question text', class: 'q-text' });
   const qDesc = el('textarea', { placeholder: 'Question description (Markdown supported)', class: 'q-desc' });
   const typeSelect = el('select', { class: 'q-type' });
-  ['multiple','multi','matching','text'].forEach(t => {
-    const opt = document.createElement('option'); opt.value = t; opt.textContent = t === 'multiple' ? 'Multiple choice' : t === 'multi' ? 'Select all that apply' : t === 'matching' ? 'Match terms' : 'Text answer';
+  ['multiple','multi','matching','text','number'].forEach(t => {
+    const opt = document.createElement('option');
+    opt.value = t;
+    opt.textContent = t === 'multiple'
+      ? 'Multiple choice'
+      : t === 'multi'
+        ? 'Select all that apply'
+        : t === 'matching'
+          ? 'Match terms'
+          : t === 'number'
+            ? 'Number answer'
+            : 'Text answer';
     typeSelect.appendChild(opt);
   });
 
-  // multiple / multi: options textarea
-  const opts = el('textarea', { placeholder: 'Options (one per line)', class: 'q-opts' });
-  // multiple: correct index
-  const correct = el('input', { placeholder: 'Correct option index (0-based)', class: 'q-correct', type: 'number', min: 0 });
-  // multi: correct indices comma separated
-  const correctMulti = el('input', { placeholder: 'Correct indices (comma separated)', class: 'q-correct-multi' });
-  // matching: pairs textarea left|right per line
-  const pairs = el('textarea', { placeholder: 'Pairs (left|right per line)', class: 'q-pairs' });
-  // text: expected answer
-  const textAnswer = el('input', { placeholder: 'Expected text answer (optional)', class: 'q-text-answer' });
+  const optionBuilder = el('div', { class: 'q-option-builder' });
+  const optionsList = el('div', { class: 'q-options-list' });
+  const addOptionBtn = el('button', { type: 'button' }, [ 'Add Option' ]);
+  const correctChoices = el('div', { class: 'q-correct-choices' });
+  // matching: interactive left/right pair builder
+  const pairBuilder = el('div', { class: 'q-pair-builder' });
+  const pairsList = el('div', { class: 'q-pairs-list' });
+  const addPairBtn = el('button', { type: 'button' }, [ 'Add Pair' ]);
+  const answerBuilder = el('div', { class: 'q-answer-builder' });
+  const answersList = el('div', { class: 'q-answers-list' });
+  const addAnswerBtn = el('button', { type: 'button' }, [ 'Add Correct Answer' ]);
+  const addOptionsHelp = el('div', { class: 'q-help' }, [ 'Tip: click Add Option, fill each option, then select the correct answer(s) below.' ]);
+  const matchingHelp = el('div', { class: 'q-help' }, [ 'Tip: add each pair using Left and Right fields below.' ]);
+  const textHelp = el('div', { class: 'q-help' }, [ 'Tip: add one or more accepted answers.' ]);
+  const numberHelp = el('div', { class: 'q-help' }, [ 'Tip: add one or more accepted numeric answers.' ]);
 
-  const remove = el('button', { type: 'button', onclick: () => container.remove() }, [ 'Remove' ]);
-  container.appendChild(qLabel);
+  container.appendChild(header);
   container.appendChild(qInput);
   container.appendChild(qDesc);
   container.appendChild(typeSelect);
-  container.appendChild(opts);
-  container.appendChild(correct);
-  container.appendChild(correctMulti);
-  container.appendChild(pairs);
-  container.appendChild(textAnswer);
-  container.appendChild(remove);
+  container.appendChild(addOptionsHelp);
+  optionBuilder.appendChild(optionsList);
+  optionBuilder.appendChild(addOptionBtn);
+  container.appendChild(optionBuilder);
+  container.appendChild(correctChoices);
+  container.appendChild(matchingHelp);
+  pairBuilder.appendChild(pairsList);
+  pairBuilder.appendChild(addPairBtn);
+  container.appendChild(pairBuilder);
+  answerBuilder.appendChild(answersList);
+  answerBuilder.appendChild(addAnswerBtn);
+  container.appendChild(textHelp);
+  container.appendChild(numberHelp);
+  container.appendChild(answerBuilder);
+
+  const choiceGroupName = 'correct-choice-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+    function createPairRow(leftValue = '', rightValue = '') {
+      const row = el('div', { class: 'q-pair-row' });
+      const left = el('input', { class: 'q-pair-left', placeholder: 'Left item' });
+      const right = el('input', { class: 'q-pair-right', placeholder: 'Right match' });
+      const remove = el('button', { type: 'button', onclick: () => row.remove() }, [ 'Remove Pair' ]);
+      left.value = leftValue;
+      right.value = rightValue;
+      row.appendChild(left);
+      row.appendChild(right);
+      row.appendChild(remove);
+      return row;
+    }
+
+    function createOptionRow(value = '') {
+      const row = el('div', { class: 'q-option-row' });
+      const input = el('input', { class: 'q-option-input', placeholder: 'Option text' });
+      const remove = el('button', { type: 'button', onclick: () => {
+        row.remove();
+        renderCorrectChoices();
+      } }, [ 'Remove Option' ]);
+      input.value = value;
+      input.addEventListener('input', renderCorrectChoices);
+      row.appendChild(input);
+      row.appendChild(remove);
+      return row;
+    }
+
+    function addOptionRow(value = '') {
+      optionsList.appendChild(createOptionRow(value));
+      renderCorrectChoices();
+    }
+
+    function createAnswerRow(value = '') {
+      const row = el('div', { class: 'q-answer-row' });
+      const input = el('input', { class: 'q-answer-input', placeholder: 'Accepted answer' });
+      const remove = el('button', { type: 'button', onclick: () => row.remove() }, [ 'Remove Answer' ]);
+      input.value = value;
+      row.appendChild(input);
+      row.appendChild(remove);
+      return row;
+    }
+
+    function addAnswerRow(value = '') {
+      answersList.appendChild(createAnswerRow(value));
+    }
+
+    function addPairRow(leftValue = '', rightValue = '') {
+      pairsList.appendChild(createPairRow(leftValue, rightValue));
+    }
+
+    addOptionBtn.addEventListener('click', () => addOptionRow());
+    addPairBtn.addEventListener('click', () => addPairRow());
+    addAnswerBtn.addEventListener('click', () => addAnswerRow());
+
+  let initialCorrectSingle = null;
+  let initialCorrectMulti = [];
+
+  function getSelectedFromUI() {
+    const t = typeSelect.value;
+    if (t === 'multiple') {
+      const selected = correctChoices.querySelector('input.q-correct-choice-single:checked');
+      return {
+        single: selected ? parseInt(selected.value, 10) : null,
+        multi: []
+      };
+    }
+    if (t === 'multi') {
+      const selected = Array.from(correctChoices.querySelectorAll('input.q-correct-choice-multi:checked'))
+        .map(n => parseInt(n.value, 10))
+        .filter(n => Number.isFinite(n));
+      return { single: null, multi: selected };
+    }
+    return { single: null, multi: [] };
+  }
+
+  function renderCorrectChoices() {
+    const t = typeSelect.value;
+    const optionLines = Array.from(optionsList.querySelectorAll('.q-option-input')).map(i => i.value.trim()).filter(Boolean);
+
+    const existing = getSelectedFromUI();
+    const selectedSingle = initialCorrectSingle != null ? initialCorrectSingle : existing.single;
+    const selectedMulti = initialCorrectMulti.length ? initialCorrectMulti.slice() : existing.multi;
+
+    correctChoices.innerHTML = '';
+    if (t !== 'multiple' && t !== 'multi') return;
+
+    const title = el('div', { class: 'q-help' }, [ t === 'multiple' ? 'Select the one correct answer:' : 'Select all correct answers:' ]);
+    correctChoices.appendChild(title);
+
+    if (optionLines.length === 0) {
+      correctChoices.appendChild(el('div', { class: 'q-help' }, [ 'Add options above to choose correct answer(s).' ]));
+      initialCorrectSingle = null;
+      initialCorrectMulti = [];
+      return;
+    }
+
+    optionLines.forEach((optText, idx) => {
+      const row = el('label', { class: 'q-correct-row' });
+      if (t === 'multiple') {
+        const input = el('input', {
+          type: 'radio',
+          class: 'q-correct-choice-single',
+          name: choiceGroupName,
+          value: idx
+        });
+        if (selectedSingle === idx) input.checked = true;
+        row.appendChild(input);
+      } else {
+        const input = el('input', {
+          type: 'checkbox',
+          class: 'q-correct-choice-multi',
+          value: idx
+        });
+        if (selectedMulti.includes(idx)) input.checked = true;
+        row.appendChild(input);
+      }
+      row.appendChild(el('span', {}, [ `${idx + 1}. ${optText}` ]));
+      correctChoices.appendChild(row);
+    });
+
+    initialCorrectSingle = null;
+    initialCorrectMulti = [];
+  }
 
   function updateVisibility() {
     const t = typeSelect.value;
-    opts.style.display = (t === 'multiple' || t === 'multi') ? '' : 'none';
-    correct.style.display = t === 'multiple' ? '' : 'none';
-    correctMulti.style.display = t === 'multi' ? '' : 'none';
-    pairs.style.display = t === 'matching' ? '' : 'none';
-    textAnswer.style.display = t === 'text' ? '' : 'none';
+    optionBuilder.style.display = (t === 'multiple' || t === 'multi') ? '' : 'none';
+    correctChoices.style.display = (t === 'multiple' || t === 'multi') ? '' : 'none';
+    addOptionsHelp.style.display = (t === 'multiple' || t === 'multi') ? '' : 'none';
+    pairBuilder.style.display = t === 'matching' ? '' : 'none';
+    matchingHelp.style.display = t === 'matching' ? '' : 'none';
+    textHelp.style.display = t === 'text' ? '' : 'none';
+    numberHelp.style.display = t === 'number' ? '' : 'none';
+    answerBuilder.style.display = (t === 'text' || t === 'number') ? '' : 'none';
+    if ((t === 'multiple' || t === 'multi') && optionsList.children.length === 0) addOptionRow();
+    if (t === 'matching' && pairsList.children.length === 0) addPairRow();
+    if ((t === 'text' || t === 'number') && answersList.children.length === 0) addAnswerRow();
+    renderCorrectChoices();
   }
   typeSelect.addEventListener('change', updateVisibility);
+
+  if (initialData) {
+    qInput.value = initialData.text || '';
+    qDesc.value = initialData.description || '';
+    typeSelect.value = initialData.type || 'multiple';
+    if (initialData.type === 'matching') {
+      (initialData.pairs || []).forEach(p => addPairRow(p.left || '', p.right || ''));
+    } else if (initialData.type === 'multi') {
+      (initialData.options || []).forEach(opt => addOptionRow(opt));
+      initialCorrectMulti = Array.isArray(initialData.correct) ? initialData.correct.slice() : [];
+    } else if (initialData.type === 'text' || initialData.type === 'number') {
+      const initialAnswers = Array.isArray(initialData.answer) ? initialData.answer : [initialData.answer || ''];
+      initialAnswers.filter(Boolean).forEach(ans => addAnswerRow(ans));
+    } else {
+      (initialData.options || []).forEach(opt => addOptionRow(opt));
+      initialCorrectSingle = initialData.correct != null ? initialData.correct : null;
+    }
+  }
+
   updateVisibility();
   return container;
+}
+
+function addQuestionBlock(initialData = null) {
+  const container = $('questions');
+  if (!container) return;
+  const block = makeQuestionBlock(container.children.length, initialData);
+  container.appendChild(block);
+  renumberQuestionBlocks();
+  const textInput = block.querySelector('.q-text');
+  if (textInput) textInput.focus();
+}
+
+function applyQuizToEditor(quiz) {
+  if (!quiz || typeof quiz !== 'object') return;
+  const title = $('quiz-title');
+  const desc = $('quiz-description');
+  const showResults = $('show-question-results');
+  const showAnswers = $('show-correct-answers');
+  const questionsContainer = $('questions');
+  if (!questionsContainer) return;
+
+  if (title) title.value = quiz.title || '';
+  if (desc) desc.value = quiz.description || '';
+  if (showResults) showResults.checked = !!quiz.showQuestionResults;
+  if (showAnswers) showAnswers.checked = !!quiz.showCorrectAnswersForIncorrect;
+
+  questionsContainer.innerHTML = '';
+  const questions = Array.isArray(quiz.questions) ? quiz.questions : [];
+  questions.forEach(q => addQuestionBlock(q));
+  if (questions.length === 0) addQuestionBlock();
+}
+
+function initAiQuizGenerator() {
+  if (!window.AIQuiz || typeof window.AIQuiz.initAiQuizGenerator !== 'function') return;
+  window.AIQuiz.initAiQuizGenerator(applyQuizToEditor);
 }
 
 async function refreshQuizList() {
@@ -109,8 +455,19 @@ async function refreshQuizList() {
     li.appendChild(btn);
     if (q.owner) {
       const ownerName = userMap[q.owner] || q.owner;
-      const ownerText = el('span', { class: 'owner' }, [ current && current.id === q.owner ? ' (you)' : ` (${ownerName})` ]);
-      li.appendChild(ownerText);
+      if (current && current.id === q.owner) {
+        const ownerWrap = el('span', { class: 'owner' }, [ ' (' ]);
+        const ownerLink = el('a', { href: '/profile.html?user=' + encodeURIComponent(q.owner) }, [ 'you' ]);
+        ownerWrap.appendChild(ownerLink);
+        ownerWrap.appendChild(document.createTextNode(')'));
+        li.appendChild(ownerWrap);
+      } else {
+        const ownerWrap = el('span', { class: 'owner' }, [ ' (' ]);
+        const ownerLink = el('a', { href: '/profile.html?user=' + encodeURIComponent(q.owner) }, [ ownerName ]);
+        ownerWrap.appendChild(ownerLink);
+        ownerWrap.appendChild(document.createTextNode(')'));
+        li.appendChild(ownerWrap);
+      }
     }
     if (current && q.owner === current.id) {
       const edit = el('button', { type: 'button', onclick: () => { window.location.href = '/edit.html?edit=' + encodeURIComponent(q.id); } }, [ 'Edit' ]);
@@ -206,29 +563,11 @@ async function editQuiz(id) {
   }
   const titleEl = $('quiz-title'); if (titleEl) titleEl.value = q.title;
   const descEl = $('quiz-description'); if (descEl) descEl.value = q.description || '';
+  const showQuestionResultsEl = $('show-question-results'); if (showQuestionResultsEl) showQuestionResultsEl.checked = !!q.showQuestionResults;
+  const showCorrectAnswersEl = $('show-correct-answers'); if (showCorrectAnswersEl) showCorrectAnswersEl.checked = !!q.showCorrectAnswersForIncorrect;
   const container = $('questions');
   container.innerHTML = '';
-  q.questions.forEach((question, idx) => {
-    const block = makeQuestionBlock(idx);
-    block.querySelector('.q-text').value = question.text || '';
-    block.querySelector('.q-desc').value = question.description || '';
-    const typeSel = block.querySelector('.q-type');
-    typeSel.value = question.type || 'multiple';
-    if (question.type === 'matching' && Array.isArray(question.pairs)) {
-      block.querySelector('.q-pairs').value = question.pairs.map(p => `${p.left}|${p.right}`).join('\n');
-    } else if (question.type === 'multi') {
-      block.querySelector('.q-opts').value = (question.options || []).join('\n');
-      block.querySelector('.q-correct-multi').value = (question.correct || []).join(',');
-    } else if (question.type === 'text') {
-      block.querySelector('.q-text-answer').value = question.answer || '';
-    } else {
-      block.querySelector('.q-opts').value = (question.options || []).join('\n');
-      block.querySelector('.q-correct').value = question.correct != null ? question.correct : '';
-    }
-    // trigger visibility
-    typeSel.dispatchEvent(new Event('change'));
-    container.appendChild(block);
-  });
+  q.questions.forEach(question => addQuestionBlock(question));
   editingId = id;
   const ei = $('edit-indicator'); if (ei) ei.classList.remove('hidden');
   const eid = $('editing-id'); if (eid) eid.textContent = id;
@@ -239,10 +578,14 @@ function loadQuiz(id) {
   api('/api/quizzes/' + id).then(q => {
     const takeSection = $('take-section'); if (takeSection) takeSection.classList.remove('hidden');
     const takeTitle = $('take-title');
+    const takeAuthor = $('take-author');
     const takeDesc = $('take-desc');
     const form = $('take-form');
+    const feedbackHost = $('submission-feedback');
     if (!form) return;
     form.innerHTML = '';
+    if (feedbackHost) feedbackHost.innerHTML = '';
+    if (takeAuthor) takeAuthor.innerHTML = '';
     if (!q || q.error) {
       if (takeTitle) takeTitle.textContent = 'Quiz not found';
       if (takeDesc) takeDesc.textContent = q && q.error ? q.error : '';
@@ -250,6 +593,22 @@ function loadQuiz(id) {
     }
     if (takeTitle) takeTitle.textContent = q.title || 'Untitled Quiz';
     if (takeDesc) takeDesc.innerHTML = renderMarkdown(q.description);
+
+    if (takeAuthor) {
+      if (q.owner) {
+        api('/api/users').then(usersRes => {
+          const users = Array.isArray(usersRes) ? usersRes : [];
+          const ownerUser = users.find(u => u && u.id === q.owner);
+          const ownerName = ownerUser ? ownerUser.username : q.owner;
+          takeAuthor.innerHTML = '';
+          takeAuthor.appendChild(el('span', {}, ['Author: ']));
+          takeAuthor.appendChild(el('a', { href: '/profile.html?user=' + encodeURIComponent(q.owner) }, [ ownerName ]));
+        });
+      } else {
+        takeAuthor.textContent = 'Author: Unknown';
+      }
+    }
+
     let hasSubmitted = false;
     let latestResultId = null;
 
@@ -352,6 +711,9 @@ function loadQuiz(id) {
       } else if (type === 'text') {
         const ta = el('textarea', { name: 'q' + qi, placeholder: 'Your answer' });
         qdiv.appendChild(ta);
+      } else if (type === 'number') {
+        const ni = el('input', { type: 'number', step: 'any', name: 'q' + qi, placeholder: 'Your numeric answer' });
+        qdiv.appendChild(ni);
       }
       form.appendChild(qdiv);
     });
@@ -376,11 +738,44 @@ function loadQuiz(id) {
         } else if (type === 'text') {
           const ta = form.querySelector('textarea[name="q' + qi + '"]');
           answers.push(ta ? ta.value : '');
+        } else if (type === 'number') {
+          const ni = form.querySelector('input[name="q' + qi + '"]');
+          const raw = ni ? ni.value : '';
+          const num = parseFloat(raw);
+          answers.push(Number.isFinite(num) ? num : null);
         }
       });
       const user = getCurrentUser();
       const res = await api('/api/quizzes/' + id + '/submit', { method: 'POST', body: JSON.stringify({ answers }) });
       const resultEl = $('result'); if (resultEl) resultEl.textContent = `Score: ${res.score}% (${res.correct}/${res.total})`;
+      const feedbackHostAfterSubmit = $('submission-feedback');
+      if (feedbackHostAfterSubmit) {
+        feedbackHostAfterSubmit.innerHTML = '';
+        if (Array.isArray(res.questionResults)) {
+          const list = el('ul', { class: 'submission-feedback-list' });
+          res.questionResults.forEach(item => {
+            const status = item.correct ? '✅ Correct' : '❌ Incorrect';
+            const li = el('li', {}, [ el('strong', {}, [ `Q${(item.index || 0) + 1}: ${status}` ]), el('div', {}, [ item.text || '' ]) ]);
+            if (!item.correct && item.correctAnswer != null) {
+              let answerText = '';
+              if (Array.isArray(item.correctAnswer)) {
+                if (item.correctAnswer.length && typeof item.correctAnswer[0] === 'object') {
+                  answerText = item.correctAnswer.map(p => `${p.left} → ${p.right}`).join(' | ');
+                } else {
+                  answerText = item.correctAnswer.join(', ');
+                }
+              } else if (typeof item.correctAnswer === 'object') {
+                answerText = JSON.stringify(item.correctAnswer);
+              } else {
+                answerText = String(item.correctAnswer);
+              }
+              li.appendChild(el('div', {}, [ `Correct answer: ${answerText}` ]));
+            }
+            list.appendChild(li);
+          });
+          feedbackHostAfterSubmit.appendChild(list);
+        }
+      }
       hasSubmitted = true;
       latestResultId = res && res.resultId ? res.resultId : null;
       renderRatingActions();
@@ -419,53 +814,62 @@ async function loadRatings(quizId, quizObj) {
   panel.appendChild(list);
 }
 
-const addQuestionBtn = $('add-question'); if (addQuestionBtn) addQuestionBtn.addEventListener('click', () => {
-  const container = $('questions'); if (container) container.appendChild(makeQuestionBlock(container.children.length));
-});
+const addQuestionBtn = $('add-question'); if (addQuestionBtn) addQuestionBtn.addEventListener('click', () => addQuestionBlock());
 
 const saveQuizBtn = $('save-quiz'); if (saveQuizBtn) saveQuizBtn.addEventListener('click', async () => {
   const title = document.getElementById('quiz-title').value.trim();
   const desc = document.getElementById('quiz-description') ? document.getElementById('quiz-description').value : '';
+  const showQuestionResults = $('show-question-results') ? $('show-question-results').checked : false;
+  const showCorrectAnswersForIncorrect = $('show-correct-answers') ? $('show-correct-answers').checked : false;
   const blocks = Array.from(document.querySelectorAll('.question-block'));
-  const questions = blocks.map(b => {
-    const text = b.querySelector('.q-text').value.trim();
-    const description = b.querySelector('.q-desc').value.trim();
-    const type = b.querySelector('.q-type').value;
-    if (type === 'matching') {
-      const raw = b.querySelector('.q-pairs').value.split('\n').map(s => s.trim()).filter(Boolean);
-      const pairs = raw.map(line => {
-        const parts = line.split('|');
-        return { left: parts[0].trim(), right: (parts[1] || '').trim() };
-      });
-      return { type: 'matching', text, description, pairs };
-    } else if (type === 'multi') {
-      const opts = b.querySelector('.q-opts').value.split('\n').map(s => s.trim()).filter(Boolean);
-      const correctRaw = b.querySelector('.q-correct-multi').value.split(',').map(s => s.trim()).filter(Boolean);
-      const correct = correctRaw.map(n => parseInt(n, 10)).filter(n => Number.isFinite(n));
-      return { type: 'multi', text, description, options: opts, correct };
-    } else if (type === 'text') {
-      const answer = b.querySelector('.q-text-answer').value.trim();
-      return { type: 'text', text, description, answer };
-    } else {
-      const opts = b.querySelector('.q-opts').value.split('\n').map(s => s.trim()).filter(Boolean);
-      const correct = parseInt(b.querySelector('.q-correct').value, 10);
-      return { type: 'multiple', text, description, options: opts, correct: Number.isFinite(correct) ? correct : 0 };
-    }
-  });
-  if (!title || questions.length === 0) { alert('Add a title and at least one question'); return; }
-  const user = getCurrentUser();
+  const { questions, errors } = collectAndValidateQuestions(blocks);
+  if (!title) {
+    alert('Please enter a quiz title.');
+    return;
+  }
+  if (questions.length === 0) {
+    alert('Add at least one question.');
+    addQuestionBlock();
+    return;
+  }
+  if (errors.length) {
+    alert('Please fix these issues before saving:\n\n' + errors.join('\n'));
+    return;
+  }
+
+  saveQuizBtn.disabled = true;
+  const originalText = saveQuizBtn.textContent;
+  saveQuizBtn.textContent = editingId ? 'Updating...' : 'Saving...';
+  let nextButtonText = 'Save Quiz';
   if (editingId) {
-    const res = await api('/api/quizzes/' + editingId, { method: 'PUT', body: JSON.stringify({ title, questions, description: desc }) });
-    if (res && res.error) { alert(res.error); return; }
+    const res = await api('/api/quizzes/' + editingId, { method: 'PUT', body: JSON.stringify({ title, questions, description: desc, showQuestionResults, showCorrectAnswersForIncorrect }) });
+    if (res && res.error) {
+      alert(res.error);
+      saveQuizBtn.disabled = false;
+      saveQuizBtn.textContent = originalText;
+      return;
+    }
     editingId = null;
     const ei = $('edit-indicator'); if (ei) ei.classList.add('hidden');
-    const saveBtn2 = $('save-quiz'); if (saveBtn2) saveBtn2.textContent = 'Save Quiz';
+    nextButtonText = 'Save Quiz';
   } else {
-    await api('/api/quizzes', { method: 'POST', body: JSON.stringify({ title, questions, description: desc }) });
+    const res = await api('/api/quizzes', { method: 'POST', body: JSON.stringify({ title, questions, description: desc, showQuestionResults, showCorrectAnswersForIncorrect }) });
+    if (res && res.error) {
+      alert(res.error);
+      saveQuizBtn.disabled = false;
+      saveQuizBtn.textContent = originalText;
+      return;
+    }
   }
   document.getElementById('quiz-title').value = '';
+  if ($('show-question-results')) $('show-question-results').checked = false;
+  if ($('show-correct-answers')) $('show-correct-answers').checked = false;
   document.getElementById('questions').innerHTML = '';
+  addQuestionBlock();
+  saveQuizBtn.disabled = false;
+  saveQuizBtn.textContent = nextButtonText;
   refreshQuizList();
+  window.location.reload();
 });
 
 // init
@@ -604,8 +1008,13 @@ if (isCreatePage || isEditPage) {
   if (editId) {
     // small timeout to allow create/edit page DOM to be ready
     setTimeout(() => editQuiz(editId), 150);
+  } else {
+    const questions = $('questions');
+    if (questions && questions.children.length === 0) addQuestionBlock();
   }
 }
+
+if (isCreatePage || isEditPage) initAiQuizGenerator();
 
 const isTakePage = window.location.pathname.endsWith('/take.html') || window.location.pathname === '/take.html';
 if (isTakePage) {
@@ -639,7 +1048,10 @@ async function initEditPage() {
     const ei = $('edit-indicator'); if (ei) ei.classList.add('hidden');
     const title = $('quiz-title'); if (title) title.value = '';
     const desc = $('quiz-description'); if (desc) desc.value = '';
+    const showResults = $('show-question-results'); if (showResults) showResults.checked = false;
+    const showAnswers = $('show-correct-answers'); if (showAnswers) showAnswers.checked = false;
     const questions = $('questions'); if (questions) questions.innerHTML = '';
+    addQuestionBlock();
     const save = $('save-quiz'); if (save) save.textContent = 'Save Quiz';
   });
   // if an edit id is present in URL, select it

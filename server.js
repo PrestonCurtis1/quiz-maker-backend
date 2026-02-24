@@ -149,6 +149,34 @@ function sanitizeQuizForPublic(quiz) {
   return safeQuiz;
 }
 
+function formatCorrectAnswerForDisplay(question) {
+  const type = question.type || 'multiple';
+  if (type === 'multiple') {
+    const index = question.correct;
+    if (typeof index === 'number' && Array.isArray(question.options)) return question.options[index] != null ? question.options[index] : index;
+    return index;
+  }
+  if (type === 'multi') {
+    const indices = Array.isArray(question.correct) ? question.correct : [];
+    const options = Array.isArray(question.options) ? question.options : [];
+    return indices.map(i => options[i] != null ? options[i] : i);
+  }
+  if (type === 'matching') {
+    const pairs = Array.isArray(question.pairs) ? question.pairs : [];
+    return pairs.map(p => ({ left: p.left, right: p.right }));
+  }
+  if (type === 'text' || type === 'fill') {
+    return Array.isArray(question.answer) ? question.answer : [question.answer];
+  }
+  if (type === 'number') {
+    return Array.isArray(question.answer) ? question.answer : [question.answer];
+  }
+  if (type === 'truefalse') {
+    return question.correct;
+  }
+  return null;
+}
+
 app.get('/api/quizzes', async (req, res) => {
   const data = await readData();
   const ratings = await readRatings();
@@ -190,11 +218,19 @@ app.get('/api/quizzes/:id/edit', async (req, res) => {
 app.post('/api/quizzes', async (req, res) => {
   const authUser = getAuthUser(req);
   if (!authUser) return res.status(401).json({ error: 'Unauthorized' });
-  const { title, questions, description } = req.body;
+  const { title, questions, description, showQuestionResults, showCorrectAnswersForIncorrect } = req.body;
   if (!title || !Array.isArray(questions)) return res.status(400).json({ error: 'Invalid payload' });
   const data = await readData();
   const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-  const quiz = { id, title, questions, owner: authUser.id, description: description || '' };
+  const quiz = {
+    id,
+    title,
+    questions,
+    owner: authUser.id,
+    description: description || '',
+    showQuestionResults: !!showQuestionResults,
+    showCorrectAnswersForIncorrect: !!showCorrectAnswersForIncorrect
+  };
   data.push(quiz);
   await writeData(data);
   res.json({ id });
@@ -203,7 +239,7 @@ app.post('/api/quizzes', async (req, res) => {
 app.put('/api/quizzes/:id', async (req, res) => {
   const authUser = getAuthUser(req);
   if (!authUser) return res.status(401).json({ error: 'Unauthorized' });
-  const { title, questions, description } = req.body;
+  const { title, questions, description, showQuestionResults, showCorrectAnswersForIncorrect } = req.body;
   if (!title || !Array.isArray(questions)) return res.status(400).json({ error: 'Invalid payload' });
   const data = await readData();
   const idx = data.findIndex(item => item.id === req.params.id);
@@ -213,6 +249,8 @@ app.put('/api/quizzes/:id', async (req, res) => {
   data[idx].questions = questions;
   data[idx].owner = data[idx].owner || authUser.id;
   data[idx].description = description || data[idx].description || '';
+  data[idx].showQuestionResults = !!showQuestionResults;
+  data[idx].showCorrectAnswersForIncorrect = !!showCorrectAnswersForIncorrect;
   await writeData(data);
   res.json({ ok: true });
 });
@@ -225,7 +263,15 @@ app.post('/api/import', async (req, res) => {
   for (const q of quizzes) {
     if (!q.title || !Array.isArray(q.questions)) continue;
     const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-    data.push({ id, title: q.title, questions: q.questions, owner: q.owner || null, description: q.description || '' });
+    data.push({
+      id,
+      title: q.title,
+      questions: q.questions,
+      owner: q.owner || null,
+      description: q.description || '',
+      showQuestionResults: !!q.showQuestionResults,
+      showCorrectAnswersForIncorrect: !!q.showCorrectAnswersForIncorrect
+    });
     added++;
   }
   await writeData(data);
@@ -294,52 +340,94 @@ app.post('/api/quizzes/:id/submit', async (req, res) => {
   const data = await readData();
   const q = data.find(item => item.id === req.params.id);
   if (!q) return res.status(404).json({ error: 'Not found' });
+
+  function toIntegerOrNull(value) {
+    const parsed = parseInt(value, 10);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  function toNumberOrNull(value) {
+    const parsed = (typeof value === 'number') ? value : parseFloat(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  function normalizeText(value) {
+    if (value == null) return '';
+    return String(value).trim().toLowerCase();
+  }
+
   let totalFraction = 0;
+  const questionFeedback = [];
   q.questions.forEach((question, idx) => {
     const userAns = answers[idx];
     const type = question.type || 'multiple';
+    let fraction = 0;
     if (type === 'multiple') {
-      totalFraction += (userAns === question.correct) ? 1 : 0;
+      const selected = toIntegerOrNull(userAns);
+      const expected = toIntegerOrNull(question.correct);
+      fraction = (selected != null && expected != null && selected === expected) ? 1 : 0;
+      totalFraction += fraction;
     } else if (type === 'multi') {
-    const options = Array.isArray(question.options) ? question.options : [];
-    let correct = 0;
-    let incorrect = 0;
-    for (option = 0; option < options.length; option++) {
-        let isCorrect = question.correct.includes(option);
-        if (isCorrect) {
-            if (userAns.includes(option)) {
-                correct++;
-            } else {
-                incorrect++;
-            }
-        } else {
-            if (userAns.includes(option)) {
-                incorrect++;
-            } else {
-                correct++;
-            }
+      const options = Array.isArray(question.options) ? question.options : [];
+      const correctAnswers = (Array.isArray(question.correct) ? question.correct : [])
+        .map(toIntegerOrNull)
+        .filter(value => value != null);
+      const selected = (Array.isArray(userAns) ? userAns : [])
+        .map(toIntegerOrNull)
+        .filter(value => value != null);
+      let correct = 0;
+      for (let optionIndex = 0; optionIndex < options.length; optionIndex++) {
+        const shouldSelect = correctAnswers.includes(optionIndex);
+        const didSelect = selected.includes(optionIndex);
+        if ((shouldSelect && didSelect) || (!shouldSelect && !didSelect)) {
+          correct++;
         }
-    }
-    const totalOptions = options.length;
-    const fraction = correct / totalOptions;
-    totalFraction += fraction;
+      }
+      const totalOptions = options.length || 1;
+      fraction = correct / totalOptions;
+      totalFraction += fraction;
     } else if (type === 'matching') {
       const pairs = Array.isArray(question.pairs) ? question.pairs : [];
       const userPairs = Array.isArray(userAns) ? userAns : [];
       if (pairs.length === 0) { return; }
       let matched = 0;
       pairs.forEach((p, i) => { if (userPairs[i] === p.right) matched++; });
-      totalFraction += (matched / pairs.length);
+      fraction = (matched / pairs.length);
+      totalFraction += fraction;
     } else if (type === 'text' || type === 'fill') {
       if (!question.answer) return;
       const expected = Array.isArray(question.answer) ? question.answer : [question.answer];
-      const ans = (typeof userAns === 'string') ? userAns.trim().toLowerCase() : '';
-      if (expected.map(s => s.trim().toLowerCase()).includes(ans)) totalFraction += 1;
+      const ans = normalizeText(userAns);
+      if (expected.map(normalizeText).includes(ans)) fraction = 1;
+      totalFraction += fraction;
+    } else if (type === 'number') {
+      if (question.answer == null) return;
+      const expected = (Array.isArray(question.answer) ? question.answer : [question.answer])
+        .map(toNumberOrNull)
+        .filter(value => value != null);
+      const ans = toNumberOrNull(userAns);
+      if (ans != null) {
+        const epsilon = 1e-9;
+        if (expected.some(value => Math.abs(value - ans) <= epsilon)) fraction = 1;
+      }
+      totalFraction += fraction;
     } else if (type === 'truefalse') {
       if (typeof question.correct === 'boolean' && typeof userAns === 'boolean') {
-        totalFraction += (userAns === question.correct) ? 1 : 0;
+        fraction = (userAns === question.correct) ? 1 : 0;
+        totalFraction += fraction;
       }
     }
+
+    const isCorrect = fraction >= 0.999;
+    const entry = {
+      index: idx,
+      text: question.text || `Question ${idx + 1}`,
+      correct: isCorrect
+    };
+    if (q.showCorrectAnswersForIncorrect && !isCorrect) {
+      entry.correctAnswer = formatCorrectAnswerForDisplay(question);
+    }
+    questionFeedback.push(entry);
   });
   const totalQuestions = q.questions.length || 1;
   const scorePercent = Math.round(100 * (totalFraction / totalQuestions));
@@ -351,7 +439,9 @@ app.post('/api/quizzes/:id/submit', async (req, res) => {
   results.push(result);
   await writeResults(results);
 
-  res.json({ total: totalQuestions, correct: totalFraction, score: scorePercent, resultId: rid });
+  const payload = { total: totalQuestions, correct: totalFraction, score: scorePercent, resultId: rid };
+  if (q.showQuestionResults) payload.questionResults = questionFeedback;
+  res.json(payload);
 });
 
 // ratings endpoints

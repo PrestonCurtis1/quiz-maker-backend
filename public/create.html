@@ -20,14 +20,27 @@
   <main>
     <section id="create-page">
       <div id="edit-indicator" class="hidden">Editing quiz <span id="editing-id"></span></div>
+      <div class="ai-generator">
+        <h3>Generate Draft with AI Questions</h3>
+        <button id="ai-generate-btn" type="button">Generate Draft Quiz</button>
+        <div class="q-help">Or generate from a study guide PDF:</div>
+        <input id="ai-pdf-file" type="file" accept="application/pdf" />
+        <button id="ai-generate-pdf-btn" type="button">Generate Draft from PDF</button>
+        <div id="ai-generate-status" class="q-help"></div>
+      </div>
       <input id="quiz-title" placeholder="Quiz title" />
       <textarea id="quiz-description" placeholder="Quiz description (markdown)" rows="4"></textarea>
+      <div class="editor-help">Use one card per question. You can reorder, duplicate, and remove questions. Enter options, then click the correct answer(s).</div>
+      <label class="editor-option"><input id="show-question-results" type="checkbox" /> Show which questions were correct/incorrect after submit</label>
+      <label class="editor-option"><input id="show-correct-answers" type="checkbox" /> Show correct answers for incorrect questions</label>
       <div id="questions"></div>
       <button id="add-question">Add Question</button>
       <button id="save-quiz">Save Quiz</button>
     </section>
   </main>
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+  <script src="ai.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

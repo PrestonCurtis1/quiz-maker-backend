@@ -4,12 +4,12 @@ body{font-family:Inter,system-ui,Segoe UI,Roboto,Arial,sans-serif;background:var
 header{display:flex;align-items:center;gap:16px;margin-bottom:18px;flex-wrap:wrap}
 header h1{margin:0;font-size:20px}
 #user-area{margin-left:auto;display:flex;gap:8px;align-items:center}
-input,textarea,button{font-size:14px}
+input,textarea,button,select{font-size:14px}
 main{display:grid;grid-template-columns:1fr 420px;gap:20px;align-items:start}
 #create-section,#list-section,#take-section{background:var(--card);padding:16px;border-radius:10px;box-shadow:0 6px 18px rgba(20,23,39,0.06);width:100%;}
 .hidden{display:none}
 .question-block{border:1px solid #eee;padding:10px;border-radius:8px;margin-bottom:10px}
-input,textarea{width:100%;margin:8px 0;padding:10px;border:1px solid #e6e9ef;border-radius:8px}
+input,textarea,select{width:100%;margin:8px 0;padding:10px;border:1px solid #e6e9ef;border-radius:8px}
 button{padding:8px 10px;border-radius:8px;border:0;background:var(--accent);color:#fff;cursor:pointer}
 button[type="button"]{background:#eef2ff;color:var(--accent);border:1px solid rgba(91,124,255,0.12)}
 button:active{transform:translateY(1px)}
@@ -19,6 +19,27 @@ button:active{transform:translateY(1px)}
 .owner{color:var(--muted);font-size:13px}
 #edit-indicator{background:#fff7ed;border:1px solid #ffedd5;padding:8px;border-radius:6px;margin-bottom:8px}
 #result{margin-top:12px;padding:8px;background:#f3f4f6;border-radius:6px}
+.question-header{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px}
+.question-actions{display:flex;gap:6px;flex-wrap:wrap}
+.question-actions button{padding:5px 8px;font-size:12px}
+.q-label{font-weight:600}
+.ai-generator{border:1px dashed #dbe3f3;border-radius:10px;padding:12px;margin-bottom:12px;background:#fafbff}
+.ai-generator h3{margin:0 0 8px 0;font-size:14px}
+.q-help{font-size:12px;color:var(--muted);margin-top:2px}
+.editor-help{font-size:13px;color:var(--muted);margin:6px 0 10px}
+label.editor-option{display:block;margin:6px 0;color:#374151}
+.q-correct-choices{margin:8px 0;padding:8px;border:1px dashed #dbe3f3;border-radius:8px;background:#fafbff}
+.q-correct-row{display:flex;align-items:center;gap:8px;padding:4px 0}
+.q-correct-row input{width:auto;margin:0}
+.q-option-builder,.q-answer-builder{margin:8px 0;padding:8px;border:1px dashed #dbe3f3;border-radius:8px;background:#fafbff}
+.q-option-row,.q-answer-row{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;margin-bottom:8px}
+.q-option-row input,.q-answer-row input{margin:0}
+.q-options-list:empty::before{content:'No options yet. Click Add Option.';color:var(--muted);font-size:12px}
+.q-answers-list:empty::before{content:'No answers yet. Click Add Correct Answer.';color:var(--muted);font-size:12px}
+.q-pair-builder{margin:8px 0;padding:8px;border:1px dashed #dbe3f3;border-radius:8px;background:#fafbff}
+.q-pair-row{display:grid;grid-template-columns:1fr 1fr auto;gap:8px;align-items:center;margin-bottom:8px}
+.q-pair-row input{margin:0}
+.q-pairs-list:empty::before{content:'No pairs yet. Click Add Pair.';color:var(--muted);font-size:12px}
 
 /* Dark mode */
 body.dark{ --bg:#0b1220; --card:#0f1724; --muted:#9ca3af; --accent:#7c9cff; color:#e6eefb }
@@ -26,7 +47,13 @@ body.dark a{ color:var(--accent) }
 body.dark section#take-section div#result{ background:#1e293b }
 body.dark div#edit-indicator{ background:#1e293b; border:1px solid #334155; color:#e6eefb }
 body.dark input,body.dark textarea{ background:#0b1220; border:1px solid #172033; color:#e6eefb }
+body.dark select{ background:#0b1220; border:1px solid #172033; color:#e6eefb }
 body.dark #create-section, body.dark #list-section, body.dark #take-section, body.dark .card { background:var(--card) }
+body.dark label.editor-option{ color:#d1d5db }
+body.dark .ai-generator{ background:#0f1626; border-color:#22314d }
+body.dark .q-correct-choices{ background:#0f1626; border-color:#22314d }
+body.dark .q-option-builder,body.dark .q-answer-builder{ background:#0f1626; border-color:#22314d }
+body.dark .q-pair-builder{ background:#0f1626; border-color:#22314d }
 
 /* Responsive layout */
 @media (max-width: 980px) {
