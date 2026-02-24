@@ -1,5 +1,11 @@
 async function api(path, options) {
-  const res = await fetch(path, Object.assign({ headers: { 'Content-Type': 'application/json' } }, options));
+  const current = getCurrentUser();
+  const token = current && current.token ? current.token : null;
+  const baseHeaders = { 'Content-Type': 'application/json' };
+  if (token) baseHeaders.Authorization = 'Bearer ' + token;
+  const mergedOptions = Object.assign({ headers: baseHeaders }, options || {});
+  mergedOptions.headers = Object.assign({}, baseHeaders, (options && options.headers) ? options.headers : {});
+  const res = await fetch(path, mergedOptions);
   try {
     return await res.json();
   } catch (err) {
@@ -40,6 +46,7 @@ function makeQuestionBlock(index) {
   const container = el('div', { class: 'question-block' });
   const qLabel = el('label', {}, [ 'Question ' + (index + 1) ]);
   const qInput = el('input', { placeholder: 'Question text', class: 'q-text' });
+  const qDesc = el('textarea', { placeholder: 'Question description (Markdown supported)', class: 'q-desc' });
   const typeSelect = el('select', { class: 'q-type' });
   ['multiple','multi','matching','text'].forEach(t => {
     const opt = document.createElement('option'); opt.value = t; opt.textContent = t === 'multiple' ? 'Multiple choice' : t === 'multi' ? 'Select all that apply' : t === 'matching' ? 'Match terms' : 'Text answer';
@@ -60,6 +67,7 @@ function makeQuestionBlock(index) {
   const remove = el('button', { type: 'button', onclick: () => container.remove() }, [ 'Remove' ]);
   container.appendChild(qLabel);
   container.appendChild(qInput);
+  container.appendChild(qDesc);
   container.appendChild(typeSelect);
   container.appendChild(opts);
   container.appendChild(correct);
@@ -108,25 +116,18 @@ async function refreshQuizList() {
       const edit = el('button', { type: 'button', onclick: () => { window.location.href = '/edit.html?edit=' + encodeURIComponent(q.id); } }, [ 'Edit' ]);
       li.appendChild(edit);
     }
-    // quick rating input
-    if (current && current.id !== q.owner) {
-      const rateIn = el('input', { type: 'number', min: 1, max: 5, placeholder: 'Rate 1-5', class: 'quick-rate' });
-      const rateBtn = el('button', { type: 'button', onclick: async () => {
-        const val = parseInt(rateIn.value, 10);
-        if (!val) return alert('Enter 1-5');
-        await api('/api/quizzes/' + q.id + '/rate', { method: 'POST', body: JSON.stringify({ userId: current.id, rating: val }) });
-        alert('Thanks for rating');
-        refreshQuizList();
-      } }, ['Rate']);
-      li.appendChild(rateIn);
-      li.appendChild(rateBtn);
-    }
     ul.appendChild(li);
   });
 }
 
 function getCurrentUser() {
-  try { return JSON.parse(localStorage.getItem('quiz_user')); } catch (e) { return null; }
+  try {
+    const user = JSON.parse(localStorage.getItem('quiz_user'));
+    if (!user || !user.id || !user.token) return null;
+    return user;
+  } catch (e) {
+    return null;
+  }
 }
 
 function setCurrentUser(u) {
@@ -198,7 +199,11 @@ function logout() { setCurrentUser(null); }
 let editingId = null;
 
 async function editQuiz(id) {
-  const q = await api('/api/quizzes/' + id);
+  const q = await api('/api/quizzes/' + id + '/edit');
+  if (!q || q.error) {
+    alert(q && q.error ? q.error : 'Unable to load quiz for editing');
+    return;
+  }
   const titleEl = $('quiz-title'); if (titleEl) titleEl.value = q.title;
   const descEl = $('quiz-description'); if (descEl) descEl.value = q.description || '';
   const container = $('questions');
@@ -206,6 +211,7 @@ async function editQuiz(id) {
   q.questions.forEach((question, idx) => {
     const block = makeQuestionBlock(idx);
     block.querySelector('.q-text').value = question.text || '';
+    block.querySelector('.q-desc').value = question.description || '';
     const typeSel = block.querySelector('.q-type');
     typeSel.value = question.type || 'multiple';
     if (question.type === 'matching' && Array.isArray(question.pairs)) {
@@ -244,13 +250,66 @@ function loadQuiz(id) {
     }
     if (takeTitle) takeTitle.textContent = q.title || 'Untitled Quiz';
     if (takeDesc) takeDesc.innerHTML = renderMarkdown(q.description);
+    let hasSubmitted = false;
+    let latestResultId = null;
+
+    function renderRatingActions() {
+      const host = $('rating-actions');
+      if (!host) return;
+      host.innerHTML = '';
+
+      const user = getCurrentUser();
+      const ratingBox = el('div', { class: 'rating-submit-box' });
+      const canRate = !!user && hasSubmitted;
+      const helperText = !user
+        ? 'Sign in to rate this quiz.'
+        : (hasSubmitted ? 'You can rate this quiz now.' : 'Submit answers to unlock rating.');
+      const helper = el('div', { class: 'rating-helper' }, [ helperText ]);
+      const ratingInputAttrs = {
+        type: 'number',
+        min: 1,
+        max: 5,
+        placeholder: canRate ? 'Rate 1-5' : 'Rate 1-5 (locked)'
+      };
+      if (!canRate) ratingInputAttrs.disabled = 'disabled';
+
+      const reviewAttrs = {
+        placeholder: canRate ? 'Leave a review (optional)' : 'Review (locked)'
+      };
+      if (!canRate) reviewAttrs.disabled = 'disabled';
+
+      const submitAttrs = {
+        type: 'button',
+        onclick: async () => {
+          if (!user) return alert('Please sign in to rate.');
+          if (!hasSubmitted || !latestResultId) return alert('Submit the quiz first to rate.');
+          const val = parseInt(ratingInput.value, 10);
+          if (!val) return alert('Enter 1-5');
+          const ratingRes = await api('/api/quizzes/' + id + '/rate', { method: 'POST', body: JSON.stringify({ rating: val, review: review.value, resultId: latestResultId }) });
+          if (ratingRes && ratingRes.error) return alert(ratingRes.error);
+          alert('Thanks for rating');
+          await loadRatings(id, q);
+        }
+      };
+      if (!canRate) submitAttrs.disabled = 'disabled';
+
+      const ratingInput = el('input', ratingInputAttrs);
+      const review = el('textarea', reviewAttrs);
+      const submitRating = el('button', submitAttrs, ['Submit Rating']);
+
+      ratingBox.appendChild(helper);
+      ratingBox.appendChild(ratingInput);
+      ratingBox.appendChild(review);
+      ratingBox.appendChild(submitRating);
+      host.appendChild(ratingBox);
+    }
+
     q.questions.forEach((question, qi) => {
       const qdiv = el('div', { class: 'take-question' });
       qdiv.appendChild(el('h3', {}, [ question.text ]));
-      // description
-      if (q.description) {
-        const d = el('div', { class: 'quiz-desc' });
-        d.innerHTML = renderMarkdown(q.description);
+      if (question.description) {
+        const d = el('div', { class: 'question-desc' });
+        d.innerHTML = renderMarkdown(question.description);
         qdiv.appendChild(d);
       }
       const type = question.type || 'multiple';
@@ -273,15 +332,21 @@ function loadQuiz(id) {
           qdiv.appendChild(el('br'));
         });
       } else if (type === 'matching') {
-        const rights = (question.pairs || []).map(p => p.right);
+        const leftItems = Array.isArray(question.leftItems)
+          ? question.leftItems
+          : (question.pairs || []).map(p => p.left);
+        const rightOptions = Array.isArray(question.rightOptions)
+          ? question.rightOptions
+          : (question.pairs || []).map(p => p.right);
+        const rights = rightOptions.slice();
         // randomize displayed right-side options
         const shuffled = shuffle(rights.slice());
-        (question.pairs || []).forEach((p, i) => {
+        leftItems.forEach((left) => {
           const sel = el('select', { name: 'q' + qi });
           // default placeholder option
           sel.appendChild(el('option', { value: '' }, [ '{Choose}' ]));
           shuffled.forEach(r => { const o = el('option', { value: r }, [ r ]); sel.appendChild(o); });
-          const row = el('div', {}, [ el('strong', {}, [ p.left ]), sel ]);
+          const row = el('div', {}, [ el('strong', {}, [ left ]), sel ]);
           qdiv.appendChild(row);
         });
       } else if (type === 'text') {
@@ -290,6 +355,10 @@ function loadQuiz(id) {
       }
       form.appendChild(qdiv);
     });
+
+    renderRatingActions();
+    loadRatings(id, q);
+
     const submitBtn = $('submit-answers');
     if (submitBtn) submitBtn.onclick = async () => {
       const answers = [];
@@ -310,25 +379,11 @@ function loadQuiz(id) {
         }
       });
       const user = getCurrentUser();
-      const res = await api('/api/quizzes/' + id + '/submit', { method: 'POST', body: JSON.stringify({ answers, userId: user ? user.id : null }) });
+      const res = await api('/api/quizzes/' + id + '/submit', { method: 'POST', body: JSON.stringify({ answers }) });
       const resultEl = $('result'); if (resultEl) resultEl.textContent = `Score: ${res.score}% (${res.correct}/${res.total})`;
-      // rating UI
-      const ratingBox = el('div', {});
-      const ratingInput = el('input', { type: 'number', min: 1, max: 5, placeholder: 'Rate 1-5' });
-      const review = el('textarea', { placeholder: 'Leave a review (optional)' });
-      const submitRating = el('button', { type: 'button', onclick: async () => {
-        const val = parseInt(ratingInput.value, 10);
-        if (!val) return alert('Enter 1-5');
-        await api('/api/quizzes/' + id + '/rate', { method: 'POST', body: JSON.stringify({ userId: user ? user.id : null, rating: val, review: review.value }) });
-        alert('Thanks for rating');
-        // refresh ratings panel
-        await loadRatings(id, q);
-      } }, ['Submit Rating']);
-      ratingBox.appendChild(ratingInput);
-      ratingBox.appendChild(review);
-      ratingBox.appendChild(submitRating);
-      form.appendChild(ratingBox);
-      // also load ratings panel now (so ratings are visible after submit)
+      hasSubmitted = true;
+      latestResultId = res && res.resultId ? res.resultId : null;
+      renderRatingActions();
       loadRatings(id, q);
     };
   });
@@ -374,6 +429,7 @@ const saveQuizBtn = $('save-quiz'); if (saveQuizBtn) saveQuizBtn.addEventListene
   const blocks = Array.from(document.querySelectorAll('.question-block'));
   const questions = blocks.map(b => {
     const text = b.querySelector('.q-text').value.trim();
+    const description = b.querySelector('.q-desc').value.trim();
     const type = b.querySelector('.q-type').value;
     if (type === 'matching') {
       const raw = b.querySelector('.q-pairs').value.split('\n').map(s => s.trim()).filter(Boolean);
@@ -381,31 +437,31 @@ const saveQuizBtn = $('save-quiz'); if (saveQuizBtn) saveQuizBtn.addEventListene
         const parts = line.split('|');
         return { left: parts[0].trim(), right: (parts[1] || '').trim() };
       });
-      return { type: 'matching', text, pairs };
+      return { type: 'matching', text, description, pairs };
     } else if (type === 'multi') {
       const opts = b.querySelector('.q-opts').value.split('\n').map(s => s.trim()).filter(Boolean);
       const correctRaw = b.querySelector('.q-correct-multi').value.split(',').map(s => s.trim()).filter(Boolean);
       const correct = correctRaw.map(n => parseInt(n, 10)).filter(n => Number.isFinite(n));
-      return { type: 'multi', text, options: opts, correct };
+      return { type: 'multi', text, description, options: opts, correct };
     } else if (type === 'text') {
       const answer = b.querySelector('.q-text-answer').value.trim();
-      return { type: 'text', text, answer };
+      return { type: 'text', text, description, answer };
     } else {
       const opts = b.querySelector('.q-opts').value.split('\n').map(s => s.trim()).filter(Boolean);
       const correct = parseInt(b.querySelector('.q-correct').value, 10);
-      return { type: 'multiple', text, options: opts, correct: Number.isFinite(correct) ? correct : 0 };
+      return { type: 'multiple', text, description, options: opts, correct: Number.isFinite(correct) ? correct : 0 };
     }
   });
   if (!title || questions.length === 0) { alert('Add a title and at least one question'); return; }
   const user = getCurrentUser();
   if (editingId) {
-    const res = await api('/api/quizzes/' + editingId, { method: 'PUT', body: JSON.stringify({ title, questions, owner: user ? user.id : null, description: desc }) });
+    const res = await api('/api/quizzes/' + editingId, { method: 'PUT', body: JSON.stringify({ title, questions, description: desc }) });
     if (res && res.error) { alert(res.error); return; }
     editingId = null;
     const ei = $('edit-indicator'); if (ei) ei.classList.add('hidden');
     const saveBtn2 = $('save-quiz'); if (saveBtn2) saveBtn2.textContent = 'Save Quiz';
   } else {
-    await api('/api/quizzes', { method: 'POST', body: JSON.stringify({ title, questions, owner: user ? user.id : null, description: desc }) });
+    await api('/api/quizzes', { method: 'POST', body: JSON.stringify({ title, questions, description: desc }) });
   }
   document.getElementById('quiz-title').value = '';
   document.getElementById('questions').innerHTML = '';
@@ -526,7 +582,10 @@ async function initProfilePage() {
       e.preventDefault();
       const fileInput = $('avatar-file'); if (!fileInput || !fileInput.files[0]) return alert('Choose a file');
       const fd = new FormData(); fd.append('avatar', fileInput.files[0]);
-      const res = await fetch('/api/users/' + userId + '/avatar', { method: 'POST', body: fd });
+      const auth = getCurrentUser();
+      const headers = {};
+      if (auth && auth.token) headers.Authorization = 'Bearer ' + auth.token;
+      const res = await fetch('/api/users/' + userId + '/avatar', { method: 'POST', headers, body: fd });
       const data = await res.json();
       if (data.avatar) { const avatarImg2 = $('profile-avatar'); if (avatarImg2) { let url = data.avatar; if (!url.startsWith('/')) url = '/' + url; avatarImg2.src = url; } alert('Uploaded'); }
     });

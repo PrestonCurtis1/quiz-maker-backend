@@ -4,6 +4,7 @@ const fsSync = require('fs');
 const path = require('path');
 
 const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 const app = express();
 const DATA_DIR = path.join(__dirname, 'data');
 const RESULTS_FILE = path.join(DATA_DIR, 'results.json');
@@ -12,6 +13,7 @@ const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const RATINGS_FILE = path.join(DATA_DIR, 'ratings.json');
 const UPLOAD_DIR = path.join(__dirname, 'public', 'uploads');
 const PORT = process.env.PORT || 80;
+const JWT_SECRET = process.env.JWT_SECRET || 'change-this-secret-in-production';
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
@@ -95,6 +97,58 @@ async function writeData(data) {
   await fs.writeFile(DATA_FILE, JSON.stringify(data, null, 2), 'utf8');
 }
 
+function signAuthToken(user) {
+  return jwt.sign({ id: user.id, username: user.username }, JWT_SECRET, { expiresIn: '7d' });
+}
+
+function getAuthUser(req) {
+  const auth = req.headers.authorization || '';
+  if (!auth.startsWith('Bearer ')) return null;
+  const token = auth.slice('Bearer '.length);
+  try {
+    const payload = jwt.verify(token, JWT_SECRET);
+    if (!payload || !payload.id) return null;
+    return { id: payload.id, username: payload.username || null };
+  } catch (err) {
+    return null;
+  }
+}
+
+function requireAuth(req, res, next) {
+  const user = getAuthUser(req);
+  if (!user) return res.status(401).json({ error: 'Unauthorized' });
+  req.authUser = user;
+  next();
+}
+
+function sanitizeQuestionForPublic(question) {
+  if (!question || typeof question !== 'object') return question;
+  const type = question.type || 'multiple';
+
+  if (type === 'matching') {
+    const pairs = Array.isArray(question.pairs) ? question.pairs : [];
+    return {
+      type: 'matching',
+      text: question.text || '',
+      description: question.description || '',
+      leftItems: pairs.map(p => p.left),
+      rightOptions: pairs.map(p => p.right)
+    };
+  }
+
+  const safeQuestion = Object.assign({}, question);
+  delete safeQuestion.correct;
+  delete safeQuestion.answer;
+  delete safeQuestion.answers;
+  return safeQuestion;
+}
+
+function sanitizeQuizForPublic(quiz) {
+  const safeQuiz = Object.assign({}, quiz);
+  safeQuiz.questions = (quiz.questions || []).map(sanitizeQuestionForPublic);
+  return safeQuiz;
+}
+
 app.get('/api/quizzes', async (req, res) => {
   const data = await readData();
   const ratings = await readRatings();
@@ -120,31 +174,44 @@ app.get('/api/quizzes/:id', async (req, res) => {
   const ratings = await readRatings();
   const itemRatings = ratings.filter(r => r.quizId === q.id);
   const avg = itemRatings.length ? Math.round(itemRatings.reduce((s, r) => s + r.rating, 0) / itemRatings.length * 10) / 10 : null;
-  res.json(Object.assign({}, q, { averageRating: avg, ratingsCount: itemRatings.length }));
+  res.json(Object.assign({}, sanitizeQuizForPublic(q), { averageRating: avg, ratingsCount: itemRatings.length }));
+});
+
+app.get('/api/quizzes/:id/edit', async (req, res) => {
+  const authUser = getAuthUser(req);
+  if (!authUser) return res.status(401).json({ error: 'Unauthorized' });
+  const data = await readData();
+  const q = data.find(item => item.id === req.params.id);
+  if (!q) return res.status(404).json({ error: 'Not found' });
+  if (q.owner && q.owner !== authUser.id) return res.status(403).json({ error: 'Forbidden' });
+  res.json(q);
 });
 
 app.post('/api/quizzes', async (req, res) => {
-  const { title, questions, owner, description } = req.body;
+  const authUser = getAuthUser(req);
+  if (!authUser) return res.status(401).json({ error: 'Unauthorized' });
+  const { title, questions, description } = req.body;
   if (!title || !Array.isArray(questions)) return res.status(400).json({ error: 'Invalid payload' });
   const data = await readData();
   const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-  const quiz = { id, title, questions, owner: owner || null, description: description || '' };
+  const quiz = { id, title, questions, owner: authUser.id, description: description || '' };
   data.push(quiz);
   await writeData(data);
   res.json({ id });
 });
 
 app.put('/api/quizzes/:id', async (req, res) => {
-  const { title, questions, owner, description } = req.body;
+  const authUser = getAuthUser(req);
+  if (!authUser) return res.status(401).json({ error: 'Unauthorized' });
+  const { title, questions, description } = req.body;
   if (!title || !Array.isArray(questions)) return res.status(400).json({ error: 'Invalid payload' });
   const data = await readData();
   const idx = data.findIndex(item => item.id === req.params.id);
   if (idx === -1) return res.status(404).json({ error: 'Not found' });
-  // allow update if owner matches or no owner
-  if (data[idx].owner && owner && data[idx].owner !== owner) return res.status(403).json({ error: 'Forbidden' });
+  if (data[idx].owner && data[idx].owner !== authUser.id) return res.status(403).json({ error: 'Forbidden' });
   data[idx].title = title;
   data[idx].questions = questions;
-  data[idx].owner = owner || data[idx].owner || null;
+  data[idx].owner = data[idx].owner || authUser.id;
   data[idx].description = description || data[idx].description || '';
   await writeData(data);
   res.json({ ok: true });
@@ -182,7 +249,8 @@ app.post('/api/users/signup', async (req, res) => {
   const user = { id, username, password: hash };
   users.push(user);
   await writeUsers(users);
-  res.json({ id, username });
+  const token = signAuthToken(user);
+  res.json({ id, username, token });
 });
 
 app.post('/api/users/login', async (req, res) => {
@@ -193,7 +261,8 @@ app.post('/api/users/login', async (req, res) => {
   if (!user) return res.status(400).json({ error: 'Invalid credentials' });
   const ok = await bcrypt.compare(password, user.password);
   if (!ok) return res.status(400).json({ error: 'Invalid credentials' });
-  res.json({ id: user.id, username: user.username });
+  const token = signAuthToken(user);
+  res.json({ id: user.id, username: user.username, token });
 });
 
 app.get('/api/users', async (req, res) => {
@@ -202,6 +271,8 @@ app.get('/api/users', async (req, res) => {
 });
 
 app.get('/api/users/:id/results', async (req, res) => {
+  const authUser = getAuthUser(req);
+  if (!authUser || authUser.id !== req.params.id) return res.status(403).json({ error: 'Forbidden' });
   const results = await readResults();
   const userResults = results.filter(r => r.userId === req.params.id);
   res.json(userResults);
@@ -216,7 +287,9 @@ app.get('/api/users/:id/profile', async (req, res) => {
 });
 
 app.post('/api/quizzes/:id/submit', async (req, res) => {
-  const { answers, userId } = req.body;
+  const { answers } = req.body;
+  const authUser = getAuthUser(req);
+  const userId = authUser ? authUser.id : null;
   if (!Array.isArray(answers)) return res.status(400).json({ error: 'Invalid payload' });
   const data = await readData();
   const q = data.find(item => item.id === req.params.id);
@@ -283,8 +356,17 @@ app.post('/api/quizzes/:id/submit', async (req, res) => {
 
 // ratings endpoints
 app.post('/api/quizzes/:id/rate', async (req, res) => {
-  const { userId, rating, review } = req.body;
+  const { rating, review, resultId } = req.body;
+  const authUser = getAuthUser(req);
+  if (!authUser) return res.status(401).json({ error: 'Login required to rate' });
+  const userId = authUser.id;
   if (!rating || typeof rating !== 'number') return res.status(400).json({ error: 'Invalid payload' });
+  if (!resultId || typeof resultId !== 'string') return res.status(400).json({ error: 'Submit quiz before rating' });
+  const results = await readResults();
+  const result = results.find(r => r.id === resultId);
+  if (!result || result.quizId !== req.params.id) return res.status(403).json({ error: 'Submit quiz before rating' });
+  if (result.userId !== userId) return res.status(403).json({ error: 'Forbidden' });
+
   const ratings = await readRatings();
   const normalizedRating = Math.max(1, Math.min(5, Math.round(rating)));
   // If userId is provided, enforce one rating per user per quiz by updating existing entry
@@ -322,6 +404,8 @@ const storage = multer.diskStorage({
 const upload = multer({ storage });
 
 app.post('/api/users/:id/avatar', upload.single('avatar'), async (req, res) => {
+  const authUser = getAuthUser(req);
+  if (!authUser || authUser.id !== req.params.id) return res.status(403).json({ error: 'Forbidden' });
   if (!req.file) return res.status(400).json({ error: 'No file' });
   const users = await readUsers();
   const u = users.find(x => x.id === req.params.id);
@@ -333,9 +417,16 @@ app.post('/api/users/:id/avatar', upload.single('avatar'), async (req, res) => {
 
 // get quizzes for user
 app.get('/api/users/:id/quizzes', async (req, res) => {
+  const authUser = getAuthUser(req);
+  if (!authUser || authUser.id !== req.params.id) return res.status(403).json({ error: 'Forbidden' });
   const data = await readData();
   const userQuizzes = data.filter(q => q.owner === req.params.id);
-  res.json(userQuizzes);
+  res.json(userQuizzes.map(q => ({
+    id: q.id,
+    title: q.title,
+    owner: q.owner || null,
+    description: q.description || ''
+  })));
 });
 
 ensureDataFile().then(() => ensureHashedPasswords()).then(() => {
