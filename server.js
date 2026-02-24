@@ -2,6 +2,8 @@ const express = require('express');
 const fs = require('fs').promises;
 const fsSync = require('fs');
 const path = require('path');
+const http = require('http');
+const https = require('https');
 
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
@@ -13,7 +15,12 @@ const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const RATINGS_FILE = path.join(DATA_DIR, 'ratings.json');
 const UPLOAD_DIR = path.join(__dirname, 'public', 'uploads');
 const PORT = process.env.PORT || 80;
+const HTTPS_PORT = process.env.HTTPS_PORT || 443;
+const HTTP_REDIRECT_PORT = process.env.HTTP_PORT || 80;
 const JWT_SECRET = process.env.JWT_SECRET || 'change-this-secret-in-production';
+const SSL_KEY_PATH = process.env.SSL_KEY_PATH || '';
+const SSL_CERT_PATH = process.env.SSL_CERT_PATH || '';
+const SSL_CA_PATH = process.env.SSL_CA_PATH || '';
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
@@ -491,5 +498,38 @@ app.get('/api/users/:id/quizzes', async (req, res) => {
 });
 
 ensureDataFile().then(() => ensureHashedPasswords()).then(() => {
-  app.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));
+  const hasSslPaths = !!(SSL_KEY_PATH && SSL_CERT_PATH);
+  const hasSslFiles = hasSslPaths && fsSync.existsSync(SSL_KEY_PATH) && fsSync.existsSync(SSL_CERT_PATH);
+
+  if (!hasSslFiles) {
+    if (hasSslPaths) {
+      console.warn('HTTPS cert/key paths configured but files were not found. Falling back to HTTP.');
+    }
+    app.listen(PORT, () => console.log(`Server running on http://0.0.0.0:${PORT}`));
+    return;
+  }
+
+  const httpsOptions = {
+    key: fsSync.readFileSync(SSL_KEY_PATH),
+    cert: fsSync.readFileSync(SSL_CERT_PATH)
+  };
+  if (SSL_CA_PATH && fsSync.existsSync(SSL_CA_PATH)) {
+    httpsOptions.ca = fsSync.readFileSync(SSL_CA_PATH);
+  }
+
+  https.createServer(httpsOptions, app).listen(HTTPS_PORT, () => {
+    console.log(`Server running on https://0.0.0.0:${HTTPS_PORT}`);
+  });
+
+  if (String(process.env.ENABLE_HTTP_REDIRECT || 'true').toLowerCase() !== 'false') {
+    http.createServer((req, res) => {
+      const hostHeader = req.headers.host || `localhost:${HTTP_REDIRECT_PORT}`;
+      const host = hostHeader.split(':')[0];
+      const location = `https://${host}:${HTTPS_PORT}${req.url || '/'}`;
+      res.writeHead(301, { Location: location });
+      res.end();
+    }).listen(HTTP_REDIRECT_PORT, () => {
+      console.log(`HTTP redirect server running on http://localhost:${HTTP_REDIRECT_PORT} -> https://localhost:${HTTPS_PORT}`);
+    });
+  }
 });
