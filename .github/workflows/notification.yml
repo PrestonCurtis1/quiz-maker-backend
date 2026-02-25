@@ -17,24 +17,17 @@ on:
   workflow_run:
     workflows: ["*"]
     types: [requested, completed]
-  check_run:
-    types: [created, completed]
-  check_suite:
-    types: [requested, completed]
   create:
   delete:
   deployment:
   deployment_status:
-  member:
-    types: [added]
   label:
     types: [created, edited, deleted]
   milestone:
     types: [created, opened, closed]
   status:
-  gollum: # This covers Wiki events
+  gollum:
   project:
-    types: [created, updated]
   public:
   workflow_dispatch:
   repository_dispatch:
@@ -52,10 +45,10 @@ jobs:
           EVENT="${{ github.event_name }}"
           PAYLOAD=$(jq -n \
             --arg title "Activity: $EVENT" \
-            --arg desc "Triggered by $ACTOR" \
+            --arg desc "Triggered by ${ACTOR:-Unknown}" \
             '{embeds: [{title: $title, description: $desc, color: 3447003}]}')
           
-          curl -X POST \
+          curl -v --fail -X POST \
           -H "Authorization: Bot $TOKEN" \
           -H "Content-Type: application/json" \
           -d "$PAYLOAD" \
