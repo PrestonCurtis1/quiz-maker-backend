@@ -1,0 +1,7 @@
+Delete Account And Delete Quiz Buttons
+Allow Quiz Authors to view results
+Show An Average score for each quiz
+add a score for each Quiz calculated by formula Score = (Rating * 2) + (average_quiz_score * 10) + log_10(submissions+1)
+Add sort by function with rating, average quiz score, submissions, score(default)
+Add order by low-high high-low
+Add filters User, Difficulty, Tags
