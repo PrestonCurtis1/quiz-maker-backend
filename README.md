@@ -1,52 +1,97 @@
-# Quiz Creator
+Here is a revamped `README.md` for your `quiz-maker-backend` project. I’ve organized it to be more professional, readable, and easier for others (or your future self) to get up and running quickly.
 
-Minimal quiz creation website (Node + Express backend, static frontend).
+---
 
-Run locally:
+# Quiz Creator Backend
 
+A minimal, high-performance Node.js and Express backend for creating, editing, and sharing quizzes. Designed for simplicity, privacy, and ease of deployment.
+
+## ✨ Features
+
+* **Zero-API Dependency:** Generate starter quizzes locally without needing third-party AI API keys.
+* **PDF to Quiz:** Built-in support for generating draft quizzes from study guide PDFs.
+* **Social Ready:** Built-in support for Open Graph tags, making your quizzes look great when shared on Discord, Twitter, or Slack.
+* **Deployment Friendly:** Native support for HTTPS and custom base URL configuration.
+
+---
+
+## 🚀 Getting Started
+
+### Prerequisites
+
+* [Node.js](https://nodejs.org/) (v16+ recommended)
+* `npm`
+
+### Installation
+
+1. Clone the repository:
 ```bash
-npm install
-npm start
+git clone https://github.com/PrestonCurtis1/quiz-maker-backend.git
+cd quiz-maker-backend
+
 ```
 
-Open http://0.0.0.0:80 in your browser.
 
-## HTTPS (Optional)
+2. Install dependencies:
+```bash
+npm install
 
-To run with HTTPS, set certificate/key paths before starting:
+```
+
+
+3. Start the server:
+```bash
+npm start
+
+```
+
+
+*The server will run on `http://0.0.0.0:80` by default.*
+
+---
+
+## ⚙️ Configuration
+
+### Environment Variables
+
+You can customize the server behavior using the following environment variables:
+
+| Variable | Description |
+| --- | --- |
+| `SSL_KEY_PATH` | Path to your SSL private key file. |
+| `SSL_CERT_PATH` | Path to your SSL certificate file. |
+| `HTTPS_PORT` | Port for HTTPS (default: 443). |
+| `HTTP_PORT` | Port for HTTP (default: 80). |
+| `PUBLIC_BASE_URL` | Your domain (e.g., `https://myquiz.com`) for correct social preview links. |
+| `ENABLE_HTTP_REDIRECT` | Set to `false` to disable automatic HTTP to HTTPS redirect. |
+
+### HTTPS Setup
+
+To run with SSL/TLS, define the paths to your certificate files before starting the server:
 
 ```bash
 set SSL_KEY_PATH=C:\path\to\key.pem
 set SSL_CERT_PATH=C:\path\to\cert.pem
-set HTTPS_PORT=443
-set HTTP_PORT=80
 npm start
+
 ```
 
-Optional env vars:
+---
 
-- `SSL_CA_PATH` (CA bundle, if needed)
-- `ENABLE_HTTP_REDIRECT=false` to disable HTTP -> HTTPS redirect
-- `PUBLIC_BASE_URL=https://your-domain.com` (recommended for correct social embed URLs)
+## 🔗 Sharing Quizzes
 
-If cert files are not configured or not found, the server falls back to HTTP on `PORT` (default `3000`).
+Share your quizzes directly via URL:
+`https://your-domain.com/share/<quizId>`
 
-## Prompt Quiz Generation (No API)
+This route automatically handles Open Graph metadata to ensure your quizzes look professional when embedded in chat apps, then redirects users to the `take.html` interface.
 
-Create/edit pages include a built-in prompt generator that creates a starter quiz locally.
-No external API key is required.
+---
 
-You can also generate a draft quiz from a study guide PDF on create/edit pages.
+## 🛡️ Security Best Practices
 
-## Discord Embeds
+* **Keep Secrets Private:** Never commit your `.pem` files or any `.env` files containing sensitive data to version control. Ensure they are listed in your `.gitignore`.
+* **Sanitization:** Always sanitize user-provided inputs if you expand the quiz generation logic to prevent injection vulnerabilities.
 
-Share quiz links using:
+---
 
-`/share/<quizId>`
-
-Example:
-
-`https://your-domain.com/share/abc123`
-
-This route serves Open Graph tags (title/description/image) for Discord/Twitter previews,
-then redirects users to `take.html` automatically.
+Would you like me to draft a specific section for your `CONTRIBUTING.md` file, or perhaps help you write a small script to automate your environment variable setup?
