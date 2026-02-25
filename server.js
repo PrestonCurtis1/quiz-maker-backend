@@ -13,6 +13,7 @@ const RESULTS_FILE = path.join(DATA_DIR, 'results.json');
 const DATA_FILE = path.join(DATA_DIR, 'quizzes.json');
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const RATINGS_FILE = path.join(DATA_DIR, 'ratings.json');
+const ROLES_FILE = path.join(DATA_DIR, 'roles.json');
 const UPLOAD_DIR = path.join(__dirname, 'public', 'uploads');
 const DEFAULT_AVATAR_FILE = path.join(__dirname, 'public', 'default-avatar.png');
 const PORT = process.env.PORT || 80;
@@ -53,6 +54,9 @@ async function ensureDataFile() {
     }
     if (!fsSync.existsSync(RATINGS_FILE)) {
       await fs.writeFile(RATINGS_FILE, '[]', 'utf8');
+    }
+    if (!fsSync.existsSync(ROLES_FILE)) {
+      await fs.writeFile(ROLES_FILE, JSON.stringify({ moderator: [], admin: [] }, null, 2), 'utf8');
     }
     // ensure uploads folder exists
     if (!fsSync.existsSync(UPLOAD_DIR)) {
@@ -110,6 +114,53 @@ async function readData() {
 
 async function writeData(data) {
   await fs.writeFile(DATA_FILE, JSON.stringify(data, null, 2), 'utf8');
+}
+
+function normalizeRolesPayload(parsed) {
+  const roles = (parsed && typeof parsed === 'object') ? parsed : {};
+  const moderators = Array.isArray(roles.moderator) ? roles.moderator : [];
+  const admins = Array.isArray(roles.admin) ? roles.admin : [];
+  return {
+    moderator: moderators.map(value => String(value)).filter(Boolean),
+    admin: admins.map(value => String(value)).filter(Boolean)
+  };
+}
+
+async function readRoles() {
+  await ensureDataFile();
+  try {
+    const txt = await fs.readFile(ROLES_FILE, 'utf8');
+    const parsed = JSON.parse(txt || '{}');
+    return normalizeRolesPayload(parsed);
+  } catch (err) {
+    return { moderator: [], admin: [] };
+  }
+}
+
+async function userHasRole(userId, roleName) {
+  if (!userId || !roleName) return false;
+  const roles = await readRoles();
+  const members = Array.isArray(roles[roleName]) ? roles[roleName] : [];
+  return members.includes(userId);
+}
+
+async function isAdmin(userId) {
+  return userHasRole(userId, 'admin');
+}
+
+async function isModerator(userId) {
+  if (!userId) return false;
+  if (await isAdmin(userId)) return true;
+  return userHasRole(userId, 'moderator');
+}
+
+async function getRolesForUser(userId) {
+  if (!userId) return [];
+  const roles = await readRoles();
+  const result = [];
+  if (Array.isArray(roles.moderator) && roles.moderator.includes(userId)) result.push('moderator');
+  if (Array.isArray(roles.admin) && roles.admin.includes(userId)) result.push('admin');
+  return result;
 }
 
 function signAuthToken(user) {
@@ -248,7 +299,8 @@ app.get('/api/quizzes/:id/edit', async (req, res) => {
   const data = await readData();
   const q = data.find(item => item.id === req.params.id);
   if (!q) return res.status(404).json({ error: 'Not found' });
-  if (q.owner && q.owner !== authUser.id) return res.status(403).json({ error: 'Forbidden' });
+  const canModerate = await isModerator(authUser.id);
+  if (!canModerate && q.owner && q.owner !== authUser.id) return res.status(403).json({ error: 'Forbidden' });
   res.json(q);
 });
 
@@ -281,7 +333,8 @@ app.put('/api/quizzes/:id', async (req, res) => {
   const data = await readData();
   const idx = data.findIndex(item => item.id === req.params.id);
   if (idx === -1) return res.status(404).json({ error: 'Not found' });
-  if (data[idx].owner && data[idx].owner !== authUser.id) return res.status(403).json({ error: 'Forbidden' });
+  const canModerate = await isModerator(authUser.id);
+  if (!canModerate && data[idx].owner && data[idx].owner !== authUser.id) return res.status(403).json({ error: 'Forbidden' });
   data[idx].title = title;
   data[idx].questions = questions;
   data[idx].owner = data[idx].owner || authUser.id;
@@ -289,6 +342,31 @@ app.put('/api/quizzes/:id', async (req, res) => {
   data[idx].showQuestionResults = !!showQuestionResults;
   data[idx].showCorrectAnswersForIncorrect = !!showCorrectAnswersForIncorrect;
   await writeData(data);
+  res.json({ ok: true });
+});
+
+app.delete('/api/quizzes/:id', async (req, res) => {
+  const authUser = getAuthUser(req);
+  if (!authUser) return res.status(401).json({ error: 'Unauthorized' });
+
+  const data = await readData();
+  const idx = data.findIndex(item => item.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: 'Not found' });
+
+  const quiz = data[idx];
+  const canModerate = await isModerator(authUser.id);
+  const isOwner = quiz.owner && quiz.owner === authUser.id;
+  if (!canModerate && !isOwner) return res.status(403).json({ error: 'Forbidden' });
+
+  data.splice(idx, 1);
+  await writeData(data);
+
+  const results = await readResults();
+  await writeResults(results.filter(r => r.quizId !== req.params.id));
+
+  const ratings = await readRatings();
+  await writeRatings(ratings.filter(r => r.quizId !== req.params.id));
+
   res.json({ ok: true });
 });
 
@@ -337,7 +415,47 @@ app.get('/api/users/:id/profile', async (req, res) => {
   const userResults = results.filter(r => r.userId === req.params.id);
   const count = userResults.length;
   const avg = count ? Math.round(userResults.reduce((s, r) => s + r.score, 0) / count) : 0;
-  res.json({ userId: req.params.id, quizCount: count, averageScore: avg });
+  const roles = await getRolesForUser(req.params.id);
+  res.json({ userId: req.params.id, quizCount: count, averageScore: avg, roles });
+});
+
+app.delete('/api/users/:id', async (req, res) => {
+  const authUser = getAuthUser(req);
+  if (!authUser) return res.status(401).json({ error: 'Unauthorized' });
+
+  const isCallerAdmin = await isAdmin(authUser.id);
+  if (!isCallerAdmin) return res.status(403).json({ error: 'Forbidden' });
+
+  const targetUserId = req.params.id;
+  const users = await readUsers();
+  const userIdx = users.findIndex(u => u.id === targetUserId);
+  if (userIdx === -1) return res.status(404).json({ error: 'User not found' });
+
+  users.splice(userIdx, 1);
+  await writeUsers(users);
+
+  const quizzes = await readData();
+  const removedQuizIds = quizzes.filter(q => q.owner === targetUserId).map(q => q.id);
+  const remainingQuizzes = quizzes.filter(q => q.owner !== targetUserId);
+  await writeData(remainingQuizzes);
+
+  const results = await readResults();
+  const remainingResults = results.filter(r => r.userId !== targetUserId && !removedQuizIds.includes(r.quizId));
+  await writeResults(remainingResults);
+
+  const ratings = await readRatings();
+  const remainingRatings = ratings.filter(r => r.userId !== targetUserId && !removedQuizIds.includes(r.quizId));
+  await writeRatings(remainingRatings);
+
+  try {
+    const extList = ['.png', '.webp', '.jpg', '.jpeg', '.gif'];
+    for (const ext of extList) {
+      const avatarPath = path.join(UPLOAD_DIR, targetUserId + ext);
+      if (fsSync.existsSync(avatarPath)) fsSync.unlinkSync(avatarPath);
+    }
+  } catch (err) {}
+
+  res.json({ ok: true, deletedUserId: targetUserId, deletedQuizCount: removedQuizIds.length });
 });
 
 app.get('/avatars/:id', (req, res) => {

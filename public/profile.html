@@ -29,10 +29,13 @@
           <img id="profile-avatar" src="default-avatar.png" alt="avatar" style="width:96px;height:96px;border-radius:8px" />
           <div>
             <h2 id="profile-username"></h2>
+            <div>Roles: <span id="profile-roles">member</span></div>
             <div>Average score: <span id="profile-avg">0</span>%</div>
             <div>Quizzes taken: <span id="profile-count">0</span></div>
           </div>
         </div>
+
+        <button id="admin-delete-user" type="button" class="danger-btn hidden">Delete Account</button>
 
         <form id="avatar-form" enctype="multipart/form-data">
           <label>Upload avatar</label>

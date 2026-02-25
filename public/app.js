@@ -611,6 +611,13 @@ function writeUserSettings(userId, settings) {
   return merged;
 }
 
+async function fetchRolesForUser(userId) {
+  if (!userId) return [];
+  const profile = await api('/api/users/' + userId + '/profile');
+  if (!profile || profile.error || !Array.isArray(profile.roles)) return [];
+  return profile.roles.map(r => String(r).toLowerCase());
+}
+
 let editingId = null;
 
 async function editQuiz(id) {
@@ -633,7 +640,7 @@ async function editQuiz(id) {
 }
 
 function loadQuiz(id) {
-  api('/api/quizzes/' + id).then(q => {
+  api('/api/quizzes/' + id).then(async q => {
     const takeSection = $('take-section'); if (takeSection) takeSection.classList.remove('hidden');
     const takeTitle = $('take-title');
     const takeAuthor = $('take-author');
@@ -641,11 +648,16 @@ function loadQuiz(id) {
     const form = $('take-form');
     const feedbackHost = $('submission-feedback');
     const downloadBtn = $('download-quiz-btn');
+    const moderatorDeleteBtn = $('moderator-delete-quiz-btn');
     if (!form) return;
     form.innerHTML = '';
     if (feedbackHost) feedbackHost.innerHTML = '';
     if (takeAuthor) takeAuthor.innerHTML = '';
     if (downloadBtn) downloadBtn.onclick = null;
+    if (moderatorDeleteBtn) {
+      moderatorDeleteBtn.classList.add('hidden');
+      moderatorDeleteBtn.onclick = null;
+    }
     if (!q || q.error) {
       if (takeTitle) takeTitle.textContent = 'Quiz not found';
       if (takeDesc) takeDesc.textContent = q && q.error ? q.error : '';
@@ -677,6 +689,22 @@ function loadQuiz(id) {
         a.remove();
         URL.revokeObjectURL(url);
       };
+    }
+
+    const currentUser = getCurrentUser();
+    if (moderatorDeleteBtn && currentUser && currentUser.id) {
+      const currentRoles = await fetchRolesForUser(currentUser.id);
+      const isModerator = currentRoles.includes('moderator');
+      if (isModerator) {
+        moderatorDeleteBtn.classList.remove('hidden');
+        moderatorDeleteBtn.onclick = async () => {
+          if (!confirm('Delete this quiz permanently?')) return;
+          const delRes = await api('/api/quizzes/' + id, { method: 'DELETE' });
+          if (delRes && delRes.error) return alert(delRes.error);
+          alert('Quiz deleted');
+          window.location.href = '/';
+        };
+      }
     }
 
     if (takeAuthor) {
@@ -1015,6 +1043,11 @@ async function initProfilePage() {
   const users = await api('/api/users');
   const userObj = Array.isArray(users) ? users.find(u => u.id === userId) : null;
   const uname = $('profile-username'); if (uname) uname.textContent = userObj ? userObj.username : (profile.username || 'User');
+  const rolesEl = $('profile-roles');
+  if (rolesEl) {
+    const roles = Array.isArray(profile.roles) ? profile.roles : [];
+    rolesEl.textContent = roles.length ? roles.join(', ') : 'member';
+  }
   const avg = $('profile-avg'); if (avg) avg.textContent = profile.averageScore || 0;
   const cnt = $('profile-count'); if (cnt) cnt.textContent = profile.quizCount || 0;
 
@@ -1106,6 +1139,27 @@ async function initProfilePage() {
 
   if (settingsStatusEl && !isOwnProfile) {
     settingsStatusEl.textContent = 'Settings are only available on your own profile.';
+  }
+
+  const adminDeleteBtn = $('admin-delete-user');
+  if (adminDeleteBtn) {
+    adminDeleteBtn.classList.add('hidden');
+    adminDeleteBtn.onclick = null;
+    if (cur && cur.id) {
+      const myRoles = await fetchRolesForUser(cur.id);
+      const isAdminUser = myRoles.includes('admin');
+      if (isAdminUser) {
+        adminDeleteBtn.classList.remove('hidden');
+        adminDeleteBtn.onclick = async () => {
+          const username = userObj && userObj.username ? userObj.username : userId;
+          if (!confirm('Delete account for ' + username + '? This also deletes their quizzes.')) return;
+          const res = await api('/api/users/' + userId, { method: 'DELETE' });
+          if (res && res.error) return alert(res.error);
+          alert('Account deleted');
+          window.location.href = '/';
+        };
+      }
+    }
   }
 
   setActiveProfileTab('profile');

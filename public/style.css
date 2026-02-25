@@ -13,6 +13,10 @@ input,textarea,select{width:100%;margin:8px 0;padding:10px;border:1px solid #e6e
 button{padding:8px 10px;border-radius:8px;border:0;background:var(--accent);color:#fff;cursor:pointer}
 button[type="button"]{background:#eef2ff;color:var(--accent);border:1px solid rgba(91,124,255,0.12)}
 button:active{transform:translateY(1px)}
+.danger-btn,
+button.danger-btn[type="button"]{background:#dc2626;color:#fff;border:1px solid #b91c1c}
+.danger-btn:hover,
+button.danger-btn[type="button"]:hover{background:#b91c1c}
 .list-actions{display:flex;gap:8px;align-items:center;margin-bottom:10px}
 #quiz-list{list-style:none;padding:0;margin:0}
 #quiz-list li{display:flex;gap:8px;align-items:center;padding:8px;border-bottom:1px solid #f0f2f5}
@@ -72,6 +76,10 @@ body.dark .q-option-builder,body.dark .q-answer-builder{ background:#0f1626; bor
 body.dark .q-pair-builder{ background:#0f1626; border-color:#22314d }
 body.dark #profile-panel-settings{ background:#0f1626; border-color:#22314d }
 body.dark #settings-openai-wrap{ background:#0b1220; border-color:#22314d }
+body.dark .danger-btn,
+body.dark button.danger-btn[type="button"]{ background:#ef4444; border-color:#dc2626; color:#fff }
+body.dark .danger-btn:hover,
+body.dark button.danger-btn[type="button"]:hover{ background:#dc2626 }
 
 /* Responsive layout */
 @media (max-width: 980px) {
