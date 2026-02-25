@@ -595,6 +595,8 @@ async function refreshQuizList() {
     }
     const avgScoreText = q.averageScore == null ? 'N/A' : `${q.averageScore}%`;
     li.appendChild(el('span', { class: 'owner' }, [ ` Average score: ${avgScoreText}` ]));
+    const scoreText = Number.isFinite(Number(q.score)) ? Number(q.score).toFixed(2) : '0.00';
+    li.appendChild(el('span', { class: 'owner' }, [ ` Score: ${scoreText}` ]));
     ul.appendChild(li);
   });
 }
@@ -777,6 +779,7 @@ function loadQuiz(id) {
     const takeTitle = $('take-title');
     const takeAuthor = $('take-author');
     const takeAverageScore = $('take-average-score');
+    const takeQuizScore = $('take-quiz-score');
     const takeDesc = $('take-desc');
     const form = $('take-form');
     const feedbackHost = $('submission-feedback');
@@ -790,6 +793,7 @@ function loadQuiz(id) {
     form.innerHTML = '';
     if (feedbackHost) feedbackHost.innerHTML = '';
     if (takeAverageScore) takeAverageScore.textContent = '';
+    if (takeQuizScore) takeQuizScore.textContent = '';
     if (authorResultsPanel) authorResultsPanel.classList.add('hidden');
     if (authorResultsList) authorResultsList.innerHTML = '';
     if (authorResultDetail) authorResultDetail.innerHTML = '';
@@ -809,6 +813,10 @@ function loadQuiz(id) {
     if (takeAverageScore) {
       const avgScoreText = q.averageScore == null ? 'N/A' : `${q.averageScore}%`;
       takeAverageScore.textContent = `Average score: ${avgScoreText}`;
+    }
+    if (takeQuizScore) {
+      const scoreText = Number.isFinite(Number(q.score)) ? Number(q.score).toFixed(2) : '0.00';
+      takeQuizScore.textContent = `Score: ${scoreText}`;
     }
     if (takeDesc) takeDesc.innerHTML = renderInlineMathInHtml(renderMarkdown(q.description));
 

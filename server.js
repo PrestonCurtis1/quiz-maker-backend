@@ -441,13 +441,20 @@ app.get('/api/quizzes', async (req, res) => {
     const avgScore = itemResults.length
       ? Math.round(itemResults.reduce((s, r) => s + (Number(r.score) || 0), 0) / itemResults.length)
       : null;
+    const submissions = itemResults.length;
+    const ratingForScore = avg == null ? 0 : avg;
+    const averageQuizScoreForScore = avgScore == null ? 0 : (avgScore / 100);
+    const computedScore = (ratingForScore * 2) + (averageQuizScoreForScore * 10) + Math.log10(submissions + 1);
+    const score = Math.round(computedScore * 100) / 100;
     return {
       id: item.id,
       title: item.title,
       owner: item.owner || null,
       description: item.description || '',
       averageRating: avg,
-      averageScore: avgScore
+      averageScore: avgScore,
+      submissions,
+      score
     };
   });
   res.json(list);
@@ -466,10 +473,17 @@ app.get('/api/quizzes/:id', async (req, res) => {
   const avgScore = itemResults.length
     ? Math.round(itemResults.reduce((s, r) => s + (Number(r.score) || 0), 0) / itemResults.length)
     : null;
+  const submissions = itemResults.length;
+  const ratingForScore = avg == null ? 0 : avg;
+  const averageQuizScoreForScore = avgScore == null ? 0 : (avgScore / 100);
+  const computedScore = (ratingForScore * 2) + (averageQuizScoreForScore * 10) + Math.log10(submissions + 1);
+  const score = Math.round(computedScore * 100) / 100;
   res.json(Object.assign({}, sanitizeQuizForPublic(q), {
     averageRating: avg,
     ratingsCount: itemRatings.length,
-    averageScore: avgScore
+    averageScore: avgScore,
+    submissions,
+    score
   }));
 });
 
