@@ -42,11 +42,20 @@ jobs:
           CHANNEL_ID: ${{ secrets.DISCORD_CHANNEL_ID }}
         run: |
           ACTOR="${{ github.actor }}"
+          # Translate internal GitHub event names to friendly names
           EVENT="${{ github.event_name }}"
+          case "$EVENT" in
+            watch) FRIENDLY_EVENT="starred" ;;
+            push)  FRIENDLY_EVENT="pushed code" ;;
+            fork)  FRIENDLY_EVENT="forked the repo" ;;
+            *)     FRIENDLY_EVENT="$EVENT" ;;
+          esac
+          
+          # Use the translated name in the title
           PAYLOAD=$(jq -n \
-            --arg title "Activity: $EVENT" \
+            --arg title "Action: $FRIENDLY_EVENT" \
             --arg desc "Triggered by ${ACTOR:-Unknown}" \
-            '{embeds: [{title: $title, description: $desc, color: 3447002}]}')
+            '{embeds: [{title: $title, description: $desc, color: 3447003}]}')
           
           curl -v --fail -X POST \
           -H "Authorization: Bot $TOKEN" \
