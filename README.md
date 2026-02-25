@@ -1,7 +1,3 @@
-Here is a revamped `README.md` for your `quiz-maker-backend` project. I’ve organized it to be more professional, readable, and easier for others (or your future self) to get up and running quickly.
-
----
-
 # Quiz Creator Backend
 
 A minimal, high-performance Node.js and Express backend for creating, editing, and sharing quizzes. Designed for simplicity, privacy, and ease of deployment.
@@ -91,7 +87,4 @@ This route automatically handles Open Graph metadata to ensure your quizzes look
 
 * **Keep Secrets Private:** Never commit your `.pem` files or any `.env` files containing sensitive data to version control. Ensure they are listed in your `.gitignore`.
 * **Sanitization:** Always sanitize user-provided inputs if you expand the quiz generation logic to prevent injection vulnerabilities.
-
----
-
-Would you like me to draft a specific section for your `CONTRIBUTING.md` file, or perhaps help you write a small script to automate your environment variable setup?
+* 
