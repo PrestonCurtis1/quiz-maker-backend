@@ -15,6 +15,7 @@ jobs:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
+          passphrase: ${{ secrets.SSH_PRIVATE_KEY_PASSPHRASE }}
           script: |
             cd quiz-maker-backend/
             git pull
@@ -27,7 +28,7 @@ jobs:
         uses: Ilshidur/action-discord@master
         with:
           args: '🚀 **Deployment Successful!** Code deployed to production.'
-        env: # <--- THIS PART IS MISSING
+        env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
 
       - name: Discord Failure Notification
@@ -35,5 +36,5 @@ jobs:
         uses: Ilshidur/action-discord@master
         with:
           args: '❌ **Deployment Failed!** Check the GitHub Actions logs for details.'
-        env: # <--- ADD THIS HERE TOO
+        env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
