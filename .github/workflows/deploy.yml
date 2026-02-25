@@ -27,11 +27,13 @@ jobs:
         uses: Ilshidur/action-discord@master
         with:
           args: '🚀 **Deployment Successful!** Code deployed to production.'
-          webhook_url: ${{ secrets.DISCORD_WEBHOOK }}
+        env: # <--- THIS PART IS MISSING
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
 
       - name: Discord Failure Notification
         if: failure()
         uses: Ilshidur/action-discord@master
         with:
           args: '❌ **Deployment Failed!** Check the GitHub Actions logs for details.'
-          webhook_url: ${{ secrets.DISCORD_WEBHOOK }}
+        env: # <--- ADD THIS HERE TOO
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
