@@ -602,10 +602,11 @@ app.delete('/api/users/:id', async (req, res) => {
   const authUser = getAuthUser(req);
   if (!authUser) return res.status(401).json({ error: 'Unauthorized' });
 
-  const isCallerAdmin = await isAdmin(authUser.id);
-  if (!isCallerAdmin) return res.status(403).json({ error: 'Forbidden' });
-
   const targetUserId = req.params.id;
+  const isCallerAdmin = await isAdmin(authUser.id);
+  const isSelfDelete = authUser.id === targetUserId;
+  if (!isCallerAdmin && !isSelfDelete) return res.status(403).json({ error: 'Forbidden' });
+
   const users = await readUsers();
   const userIdx = users.findIndex(u => u.id === targetUserId);
   if (userIdx === -1) return res.status(404).json({ error: 'User not found' });
@@ -625,6 +626,11 @@ app.delete('/api/users/:id', async (req, res) => {
   const ratings = await readRatings();
   const remainingRatings = ratings.filter(r => r.userId !== targetUserId && !removedQuizIds.includes(r.quizId));
   await writeRatings(remainingRatings);
+
+  const roles = await readRoles();
+  roles.admin = (Array.isArray(roles.admin) ? roles.admin : []).filter(id => id !== targetUserId);
+  roles.moderator = (Array.isArray(roles.moderator) ? roles.moderator : []).filter(id => id !== targetUserId);
+  await fs.writeFile(ROLES_FILE, JSON.stringify(roles, null, 2), 'utf8');
 
   const settingsStore = await readSettingsStore();
   if (settingsStore[targetUserId]) {

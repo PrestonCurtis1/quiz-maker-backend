@@ -779,16 +779,16 @@ function loadQuiz(id) {
     const feedbackHost = $('submission-feedback');
     const downloadBtn = $('download-quiz-btn');
     const shareBtn = $('share-quiz-btn');
-    const moderatorDeleteBtn = $('moderator-delete-quiz-btn');
+    const deleteQuizBtn = $('moderator-delete-quiz-btn');
     if (!form) return;
     form.innerHTML = '';
     if (feedbackHost) feedbackHost.innerHTML = '';
     if (takeAuthor) takeAuthor.innerHTML = '';
     if (downloadBtn) downloadBtn.onclick = null;
     if (shareBtn) shareBtn.onclick = null;
-    if (moderatorDeleteBtn) {
-      moderatorDeleteBtn.classList.add('hidden');
-      moderatorDeleteBtn.onclick = null;
+    if (deleteQuizBtn) {
+      deleteQuizBtn.classList.add('hidden');
+      deleteQuizBtn.onclick = null;
     }
     if (!q || q.error) {
       if (takeTitle) takeTitle.textContent = 'Quiz not found';
@@ -865,12 +865,13 @@ function loadQuiz(id) {
     }
 
     const currentUser = getCurrentUser();
-    if (moderatorDeleteBtn && currentUser && currentUser.id) {
+    if (deleteQuizBtn && currentUser && currentUser.id) {
+      const isOwner = !!q.owner && q.owner === currentUser.id;
       const currentRoles = await fetchRolesForUser(currentUser.id);
-      const isModerator = currentRoles.includes('moderator');
-      if (isModerator) {
-        moderatorDeleteBtn.classList.remove('hidden');
-        moderatorDeleteBtn.onclick = async () => {
+      const canModerate = currentRoles.includes('moderator') || currentRoles.includes('admin');
+      if (isOwner || canModerate) {
+        deleteQuizBtn.classList.remove('hidden');
+        deleteQuizBtn.onclick = async () => {
           if (!confirm('Delete this quiz permanently?')) return;
           const delRes = await api('/api/quizzes/' + id, { method: 'DELETE' });
           if (delRes && delRes.error) return alert(delRes.error);
@@ -1331,14 +1332,19 @@ async function initProfilePage() {
     if (cur && cur.id) {
       const myRoles = await fetchRolesForUser(cur.id);
       const isAdminUser = myRoles.includes('admin');
-      if (isAdminUser) {
+      const isSelfProfile = cur.id === userId;
+      if (isAdminUser || isSelfProfile) {
         adminDeleteBtn.classList.remove('hidden');
         adminDeleteBtn.onclick = async () => {
           const username = userObj && userObj.username ? userObj.username : userId;
-          if (!confirm('Delete account for ' + username + '? This also deletes their quizzes.')) return;
+          const confirmText = isSelfProfile
+            ? 'Delete your account permanently? This also deletes your quizzes.'
+            : ('Delete account for ' + username + '? This also deletes their quizzes.');
+          if (!confirm(confirmText)) return;
           const res = await api('/api/users/' + userId, { method: 'DELETE' });
           if (res && res.error) return alert(res.error);
-          alert('Account deleted');
+          if (isSelfProfile) setCurrentUser(null);
+          alert(isSelfProfile ? 'Your account was deleted.' : 'Account deleted');
           window.location.href = '/';
         };
       }
