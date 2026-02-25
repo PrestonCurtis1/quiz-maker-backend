@@ -611,6 +611,24 @@ function writeUserSettings(userId, settings) {
   return merged;
 }
 
+function legacyCopyText(value) {
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = value;
+    ta.setAttribute('readonly', 'readonly');
+    ta.style.position = 'fixed';
+    ta.style.left = '-9999px';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    const ok = document.execCommand('copy');
+    ta.remove();
+    return !!ok;
+  } catch (err) {
+    return false;
+  }
+}
+
 async function fetchRolesForUser(userId) {
   if (!userId) return [];
   const profile = await api('/api/users/' + userId + '/profile');
@@ -701,12 +719,16 @@ function loadQuiz(id) {
           text: 'Try this quiz!',
           url: shareUrl
         };
+        let shared = false;
+
         try {
           if (navigator.share) {
             await navigator.share(shareData);
-            return;
+            shared = true;
           }
         } catch (err) {}
+
+        if (shared) return;
 
         try {
           if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -714,6 +736,16 @@ function loadQuiz(id) {
             alert('Share link copied to clipboard');
             return;
           }
+        } catch (err) {}
+
+        if (legacyCopyText(shareUrl)) {
+          alert('Share link copied to clipboard');
+          return;
+        }
+
+        try {
+          const popup = window.open(shareUrl, '_blank', 'noopener,noreferrer');
+          if (popup) return;
         } catch (err) {}
 
         prompt('Copy this share link:', shareUrl);
