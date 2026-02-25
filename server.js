@@ -14,6 +14,7 @@ const DATA_FILE = path.join(DATA_DIR, 'quizzes.json');
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const RATINGS_FILE = path.join(DATA_DIR, 'ratings.json');
 const ROLES_FILE = path.join(DATA_DIR, 'roles.json');
+const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
 const UPLOAD_DIR = path.join(__dirname, 'public', 'uploads');
 const DEFAULT_AVATAR_FILE = path.join(__dirname, 'public', 'default-avatar.png');
 const PORT = process.env.PORT || 80;
@@ -39,6 +40,17 @@ async function readJsonArrayFile(filePath) {
   return Array.isArray(parsed) ? parsed : [];
 }
 
+async function readJsonObjectFile(filePath) {
+  const txt = await fs.readFile(filePath, 'utf8');
+  let parsed;
+  try {
+    parsed = JSON.parse(txt || '{}');
+  } catch (err) {
+    return {};
+  }
+  return (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
+}
+
 async function ensureDataFile() {
   try {
     await fs.mkdir(DATA_DIR, { recursive: true });
@@ -58,6 +70,9 @@ async function ensureDataFile() {
     }
     if (!fsSync.existsSync(ROLES_FILE)) {
       await fs.writeFile(ROLES_FILE, JSON.stringify({ moderator: [], admin: [] }, null, 2), 'utf8');
+    }
+    if (!fsSync.existsSync(SETTINGS_FILE)) {
+      await fs.writeFile(SETTINGS_FILE, JSON.stringify({}, null, 2), 'utf8');
     }
     // ensure uploads folder exists
     if (!fsSync.existsSync(UPLOAD_DIR)) {
@@ -115,6 +130,16 @@ async function readData() {
 
 async function writeData(data) {
   await fs.writeFile(DATA_FILE, JSON.stringify(data, null, 2), 'utf8');
+}
+
+async function readSettingsStore() {
+  await ensureDataFile();
+  return readJsonObjectFile(SETTINGS_FILE);
+}
+
+async function writeSettingsStore(data) {
+  const safe = (data && typeof data === 'object' && !Array.isArray(data)) ? data : {};
+  await fs.writeFile(SETTINGS_FILE, JSON.stringify(safe, null, 2), 'utf8');
 }
 
 function normalizeRolesPayload(parsed) {
@@ -179,6 +204,22 @@ function getAuthUser(req) {
   } catch (err) {
     return null;
   }
+}
+
+function normalizeUserSettings(input) {
+  const payload = (input && typeof input === 'object') ? input : {};
+  const provider = String(payload.aiProvider || '').toLowerCase();
+  const difficulty = String(payload.defaultDifficulty || '').toLowerCase();
+  const parsedCount = parseInt(payload.defaultQuestionCount, 10);
+
+  return {
+    aiProvider: provider === 'openai' ? 'openai' : 'local',
+    openaiModel: String(payload.openaiModel || 'gpt-4.1-mini').trim() || 'gpt-4.1-mini',
+    openaiApiKey: String(payload.openaiApiKey || '').trim(),
+    reviewGeneratedQuestions: payload.reviewGeneratedQuestions !== false,
+    defaultDifficulty: (difficulty === 'easy' || difficulty === 'medium' || difficulty === 'hard') ? difficulty : 'medium',
+    defaultQuestionCount: Number.isFinite(parsedCount) ? Math.max(3, Math.min(50, parsedCount)) : 8
+  };
 }
 
 function requireAuth(req, res, next) {
@@ -537,6 +578,26 @@ app.get('/api/users/:id/profile', async (req, res) => {
   res.json({ userId: req.params.id, quizCount: count, averageScore: avg, roles });
 });
 
+app.get('/api/users/:id/settings', async (req, res) => {
+  const authUser = getAuthUser(req);
+  if (!authUser || authUser.id !== req.params.id) return res.status(403).json({ error: 'Forbidden' });
+
+  const store = await readSettingsStore();
+  const raw = store[req.params.id] && typeof store[req.params.id] === 'object' ? store[req.params.id] : {};
+  res.json(normalizeUserSettings(raw));
+});
+
+app.put('/api/users/:id/settings', async (req, res) => {
+  const authUser = getAuthUser(req);
+  if (!authUser || authUser.id !== req.params.id) return res.status(403).json({ error: 'Forbidden' });
+
+  const next = normalizeUserSettings(req.body || {});
+  const store = await readSettingsStore();
+  store[req.params.id] = next;
+  await writeSettingsStore(store);
+  res.json(next);
+});
+
 app.delete('/api/users/:id', async (req, res) => {
   const authUser = getAuthUser(req);
   if (!authUser) return res.status(401).json({ error: 'Unauthorized' });
@@ -564,6 +625,12 @@ app.delete('/api/users/:id', async (req, res) => {
   const ratings = await readRatings();
   const remainingRatings = ratings.filter(r => r.userId !== targetUserId && !removedQuizIds.includes(r.quizId));
   await writeRatings(remainingRatings);
+
+  const settingsStore = await readSettingsStore();
+  if (settingsStore[targetUserId]) {
+    delete settingsStore[targetUserId];
+    await writeSettingsStore(settingsStore);
+  }
 
   try {
     const extList = ['.png', '.webp', '.jpg', '.jpeg', '.gif'];

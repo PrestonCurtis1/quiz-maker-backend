@@ -453,9 +453,9 @@ function normalizeImportedQuiz(quiz) {
 function initAiQuizGenerator() {
   if (!window.AIQuiz || typeof window.AIQuiz.initAiQuizGenerator !== 'function') return;
   window.AIQuiz.initAiQuizGenerator(applyQuizToEditor, {
-    getUserSettings: () => {
+    getUserSettings: async () => {
       const cur = getCurrentUser();
-      return readUserSettings(cur ? cur.id : null);
+      return await readUserSettings(cur ? cur.id : null);
     }
   });
 }
@@ -578,10 +578,6 @@ async function login() {
 
 function logout() { setCurrentUser(null); }
 
-function getUserSettingsStorageKey(userId) {
-  return 'quiz_settings_' + (userId || 'guest');
-}
-
 function getDefaultUserSettings() {
   return {
     aiProvider: 'local',
@@ -593,21 +589,42 @@ function getDefaultUserSettings() {
   };
 }
 
-function readUserSettings(userId) {
+const userSettingsCache = {};
+
+async function readUserSettings(userId, options = {}) {
   const defaults = getDefaultUserSettings();
-  try {
-    const raw = localStorage.getItem(getUserSettingsStorageKey(userId));
-    if (!raw) return defaults;
-    const parsed = JSON.parse(raw);
-    return Object.assign({}, defaults, parsed || {});
-  } catch (err) {
-    return defaults;
+  if (!userId) return defaults;
+
+  const force = !!(options && options.force);
+  if (!force && userSettingsCache[userId]) {
+    return Object.assign({}, defaults, userSettingsCache[userId]);
   }
+
+  const res = await api('/api/users/' + userId + '/settings');
+  if (!res || res.error) {
+    return Object.assign({}, defaults, userSettingsCache[userId] || {});
+  }
+
+  const merged = Object.assign({}, defaults, res || {});
+  userSettingsCache[userId] = merged;
+  return merged;
 }
 
-function writeUserSettings(userId, settings) {
+async function writeUserSettings(userId, settings) {
   const merged = Object.assign({}, getDefaultUserSettings(), settings || {});
-  localStorage.setItem(getUserSettingsStorageKey(userId), JSON.stringify(merged));
+  if (!userId) return merged;
+
+  const res = await api('/api/users/' + userId + '/settings', {
+    method: 'PUT',
+    body: JSON.stringify(merged)
+  });
+
+  if (res && !res.error) {
+    const normalized = Object.assign({}, getDefaultUserSettings(), res || {});
+    userSettingsCache[userId] = normalized;
+    return normalized;
+  }
+
   return merged;
 }
 
@@ -1151,7 +1168,7 @@ async function initProfilePage() {
   }
 
   if (isOwnProfile && aiProviderEl && openAiModelEl && openAiKeyEl && defaultDifficultyEl && defaultCountEl && reviewPromptsEl) {
-    const settings = readUserSettings(userId);
+    const settings = await readUserSettings(userId, { force: true });
     aiProviderEl.value = settings.aiProvider === 'openai' ? 'openai' : 'local';
     openAiModelEl.value = settings.openaiModel || 'gpt-4.1-mini';
     openAiKeyEl.value = settings.openaiApiKey || '';
@@ -1170,7 +1187,7 @@ async function initProfilePage() {
     }
 
     if (saveSettingsBtn) {
-      saveSettingsBtn.addEventListener('click', () => {
+      saveSettingsBtn.addEventListener('click', async () => {
         const provider = aiProviderEl.value === 'openai' ? 'openai' : 'local';
         const openaiModel = (openAiModelEl.value || '').trim() || 'gpt-4.1-mini';
         const openaiApiKey = (openAiKeyEl.value || '').trim();
@@ -1184,7 +1201,7 @@ async function initProfilePage() {
           return;
         }
 
-        writeUserSettings(userId, {
+        const saved = await writeUserSettings(userId, {
           aiProvider: provider,
           openaiModel,
           openaiApiKey,
@@ -1193,7 +1210,7 @@ async function initProfilePage() {
           reviewGeneratedQuestions
         });
 
-        if (settingsStatusEl) settingsStatusEl.textContent = 'Settings saved.';
+        if (settingsStatusEl) settingsStatusEl.textContent = (saved && saved.error) ? (saved.error || 'Failed to save settings.') : 'Settings saved.';
       });
     }
   }

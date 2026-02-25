@@ -1534,11 +1534,11 @@
     };
   }
 
-  function readRuntimeAiSettings(options) {
+  async function readRuntimeAiSettings(options) {
     const defaults = getDefaultAiSettings();
     try {
       if (options && typeof options.getUserSettings === 'function') {
-        const fromOption = options.getUserSettings();
+        const fromOption = await options.getUserSettings();
         return Object.assign({}, defaults, fromOption || {});
       }
 
@@ -1548,7 +1548,8 @@
           const cur = window.getCurrentUser();
           userId = cur && cur.id ? cur.id : null;
         }
-        return Object.assign({}, defaults, window.readUserSettings(userId) || {});
+        const localSettings = await window.readUserSettings(userId);
+        return Object.assign({}, defaults, localSettings || {});
       }
     } catch (err) {
       return defaults;
@@ -1838,7 +1839,7 @@
     if (!buttonEl || !statusEl || typeof applyQuizToEditor !== 'function') return;
 
     buttonEl.addEventListener('click', async () => {
-      const settings = readRuntimeAiSettings(options);
+      const settings = await readRuntimeAiSettings(options);
       const config = await askDraftQuizConfig(settings);
       if (!config) {
         statusEl.textContent = 'Draft generation canceled.';
@@ -1911,7 +1912,7 @@
           return;
         }
 
-        const settings = readRuntimeAiSettings(options);
+        const settings = await readRuntimeAiSettings(options);
         const useOpenAi = (settings.aiProvider || 'local') === 'openai';
         const hasOpenAiKey = !!normalizeSpaces(settings.openaiApiKey || '');
         if (!useOpenAi || !hasOpenAiKey) {
