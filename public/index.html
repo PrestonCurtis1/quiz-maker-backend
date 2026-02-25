@@ -23,12 +23,32 @@
       <h2>Available Quizzes</h2>
       <div class="list-actions">
         <input id="search" placeholder="Search quizzes" />
+        <select id="sort-by">
+          <option value="score" selected>Sort: Score</option>
+          <option value="averageRating">Sort: Rating</option>
+          <option value="averageScore">Sort: Average Quiz Score</option>
+          <option value="submissions">Sort: Submissions</option>
+        </select>
+        <select id="order-by">
+          <option value="desc" selected>Order: High-Low</option>
+          <option value="asc">Order: Low-High</option>
+        </select>
+        <select id="filter-user">
+          <option value="all">User: All</option>
+        </select>
+        <select id="filter-difficulty">
+          <option value="all">Difficulty: All</option>
+          <option value="easy">Easy</option>
+          <option value="medium">Medium</option>
+          <option value="hard">Hard</option>
+        </select>
+        <input id="filter-tags" placeholder="Filter tags (comma-separated)" />
         <button id="search-btn">Search</button>
       </div>
       <ul id="quiz-list"></ul>
     </section>
   </main>
 
-  <script src="app.js?v=20260225e"></script>
+  <script src="app.js?v=20260225i"></script>
 </body>
 </html>

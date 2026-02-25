@@ -33,6 +33,20 @@
         <div id="ai-generate-status" class="q-help"></div>
       </div>
       <input id="quiz-title" placeholder="Quiz title" />
+      <label for="quiz-difficulty">Difficulty</label>
+      <select id="quiz-difficulty">
+        <option value="easy">Easy</option>
+        <option value="medium" selected>Medium</option>
+        <option value="hard">Hard</option>
+      </select>
+      <label for="quiz-tag-input">Tags</label>
+      <div class="tag-builder">
+        <div class="tag-builder-row">
+          <input id="quiz-tag-input" placeholder="New tag" />
+          <button id="add-tag-btn" type="button">Add Tag</button>
+        </div>
+        <ul id="quiz-tags-list" class="tag-list"></ul>
+      </div>
       <textarea id="quiz-description" placeholder="Quiz description (markdown)" rows="4"></textarea>
       <div class="editor-help">Use one card per question. You can reorder, duplicate, and remove questions. Enter options, then click the correct answer(s).</div>
       <label class="editor-option"><input id="show-question-results" type="checkbox" /> Show which questions were correct/incorrect after submit</label>
@@ -45,6 +59,6 @@
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
   <script src="ai.js?v=20260224e"></script>
-  <script src="app.js?v=20260224e"></script>
+  <script src="app.js?v=20260225j"></script>
 </body>
 </html>

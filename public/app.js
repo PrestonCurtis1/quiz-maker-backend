@@ -23,6 +23,72 @@ function el(tag, attrs = {}, children = []) {
   return e;
 }
 
+function normalizeTags(values) {
+  if (!Array.isArray(values)) return [];
+  const seen = new Set();
+  const out = [];
+  values.forEach(value => {
+    const clean = String(value || '').trim();
+    const key = clean.toLowerCase();
+    if (!clean || seen.has(key)) return;
+    seen.add(key);
+    out.push(clean);
+  });
+  return out;
+}
+
+function readEditorTags() {
+  const list = $('quiz-tags-list');
+  if (!list) return [];
+  const items = Array.from(list.querySelectorAll('li[data-tag]'));
+  return normalizeTags(items.map(item => item.getAttribute('data-tag') || ''));
+}
+
+function renderEditorTags(values) {
+  const list = $('quiz-tags-list');
+  if (!list) return;
+  list.innerHTML = '';
+  normalizeTags(values).forEach(tag => {
+    const tagLabel = el('span', {}, [tag]);
+    const removeBtn = el('button', {
+      type: 'button',
+      onclick: () => {
+        const remaining = readEditorTags().filter(existing => existing.toLowerCase() !== tag.toLowerCase());
+        renderEditorTags(remaining);
+      }
+    }, ['Remove Tag']);
+    const row = el('li', { 'data-tag': tag }, [tagLabel, removeBtn]);
+    list.appendChild(row);
+  });
+}
+
+function addEditorTag(rawTag) {
+  const clean = String(rawTag || '').trim();
+  if (!clean) return;
+  const tags = readEditorTags();
+  tags.push(clean);
+  renderEditorTags(tags);
+}
+
+function initEditorTagControls() {
+  const addBtn = $('add-tag-btn');
+  const input = $('quiz-tag-input');
+  if (!addBtn || !input) return;
+
+  addBtn.addEventListener('click', () => {
+    addEditorTag(input.value);
+    input.value = '';
+    input.focus();
+  });
+
+  input.addEventListener('keydown', event => {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    addEditorTag(input.value);
+    input.value = '';
+  });
+}
+
 function shuffle(array) {
   for (let i = array.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
@@ -509,6 +575,7 @@ function applyQuizToEditor(quiz) {
   if (!quiz || typeof quiz !== 'object') return;
   const title = $('quiz-title');
   const desc = $('quiz-description');
+  const difficulty = $('quiz-difficulty');
   const showResults = $('show-question-results');
   const showAnswers = $('show-correct-answers');
   const questionsContainer = $('questions');
@@ -516,6 +583,14 @@ function applyQuizToEditor(quiz) {
 
   if (title) title.value = quiz.title || '';
   if (desc) desc.value = quiz.description || '';
+  if (difficulty) {
+    const normalizedDifficulty = String(quiz.difficulty || '').toLowerCase();
+    difficulty.value = ['easy', 'medium', 'hard'].includes(normalizedDifficulty) ? normalizedDifficulty : 'medium';
+  }
+  const list = Array.isArray(quiz.tags)
+    ? quiz.tags.map(tag => String(tag || '').trim()).filter(Boolean)
+    : [];
+  renderEditorTags(list);
   if (showResults) showResults.checked = !!quiz.showQuestionResults;
   if (showAnswers) showAnswers.checked = !!quiz.showCorrectAnswersForIncorrect;
 
@@ -536,9 +611,17 @@ function pickQuizFromJsonPayload(payload) {
 
 function normalizeImportedQuiz(quiz) {
   const base = quiz && typeof quiz === 'object' ? quiz : {};
+  const normalizedDifficulty = String(base.difficulty || '').toLowerCase();
+  const normalizedTags = Array.isArray(base.tags)
+    ? base.tags.map(tag => String(tag || '').trim()).filter(Boolean)
+    : (typeof base.tags === 'string'
+      ? base.tags.split(',').map(tag => tag.trim()).filter(Boolean)
+      : []);
   return {
     title: (base.title || 'Imported Quiz').toString(),
     description: base.description || '',
+    difficulty: ['easy', 'medium', 'hard'].includes(normalizedDifficulty) ? normalizedDifficulty : 'medium',
+    tags: normalizedTags,
     showQuestionResults: !!base.showQuestionResults,
     showCorrectAnswersForIncorrect: !!base.showCorrectAnswersForIncorrect,
     questions: Array.isArray(base.questions) ? base.questions : []
@@ -557,6 +640,11 @@ function initAiQuizGenerator() {
 
 async function refreshQuizList() {
   const searchInput = $('search');
+  const sortByEl = $('sort-by');
+  const orderByEl = $('order-by');
+  const filterUserEl = $('filter-user');
+  const filterDifficultyEl = $('filter-difficulty');
+  const filterTagsEl = $('filter-tags');
   const q = searchInput ? searchInput.value.trim() : '';
   const url = q ? '/api/quizzes?search=' + encodeURIComponent(q) : '/api/quizzes';
   const list = await api(url);
@@ -569,7 +657,59 @@ async function refreshQuizList() {
   const users = Array.isArray(usersRes) ? usersRes : [];
   const userMap = {};
   users.forEach(u => { if (u && u.id) userMap[u.id] = u.username || u.id; });
-  (list || []).forEach(q => {
+
+  const rawList = Array.isArray(list) ? list.slice() : [];
+
+  if (filterUserEl) {
+    const previous = filterUserEl.value || 'all';
+    const ownerIds = Array.from(new Set(rawList.map(item => item.owner).filter(Boolean)));
+    ownerIds.sort((a, b) => String(userMap[a] || a).localeCompare(String(userMap[b] || b)));
+    filterUserEl.innerHTML = '';
+    filterUserEl.appendChild(el('option', { value: 'all' }, ['User: All']));
+    ownerIds.forEach(ownerId => {
+      filterUserEl.appendChild(el('option', { value: ownerId }, [userMap[ownerId] || ownerId]));
+    });
+    filterUserEl.value = ownerIds.includes(previous) ? previous : 'all';
+  }
+
+  const selectedUser = filterUserEl ? filterUserEl.value : 'all';
+  const selectedDifficulty = filterDifficultyEl ? String(filterDifficultyEl.value || 'all').toLowerCase() : 'all';
+  const tagNeedles = filterTagsEl
+    ? String(filterTagsEl.value || '')
+      .split(',')
+      .map(value => value.trim().toLowerCase())
+      .filter(Boolean)
+    : [];
+
+  const filtered = rawList.filter(item => {
+    if (selectedUser !== 'all' && item.owner !== selectedUser) return false;
+
+    const rawDifficulty = String(item.difficulty || '').toLowerCase();
+    const quizDifficulty = ['easy', 'medium', 'hard'].includes(rawDifficulty) ? rawDifficulty : 'medium';
+    if (selectedDifficulty !== 'all' && quizDifficulty !== selectedDifficulty) return false;
+
+    if (tagNeedles.length) {
+      const tags = Array.isArray(item.tags)
+        ? item.tags.map(tag => String(tag || '').toLowerCase())
+        : [];
+      const matchesAll = tagNeedles.every(needle => tags.some(tag => tag.includes(needle)));
+      if (!matchesAll) return false;
+    }
+
+    return true;
+  });
+
+  const sortBy = sortByEl ? sortByEl.value : 'score';
+  const orderBy = orderByEl ? orderByEl.value : 'desc';
+  filtered.sort((a, b) => {
+    const aVal = Number(a && a[sortBy]);
+    const bVal = Number(b && b[sortBy]);
+    const aNum = Number.isFinite(aVal) ? aVal : 0;
+    const bNum = Number.isFinite(bVal) ? bVal : 0;
+    return orderBy === 'asc' ? (aNum - bNum) : (bNum - aNum);
+  });
+
+  filtered.forEach(q => {
     const li = el('li');
     const btn = el('button', { type: 'button', onclick: () => { window.location.href = '/share/' + encodeURIComponent(q.id); } }, [ q.title ]);
     li.appendChild(btn);
@@ -593,8 +733,15 @@ async function refreshQuizList() {
       const edit = el('button', { type: 'button', onclick: () => { window.location.href = '/edit.html?edit=' + encodeURIComponent(q.id); } }, [ 'Edit' ]);
       li.appendChild(edit);
     }
+    const difficultyText = q.difficulty ? String(q.difficulty) : 'medium';
+    li.appendChild(el('span', { class: 'owner' }, [ ` Difficulty: ${difficultyText}` ]));
+    const tagsText = Array.isArray(q.tags) && q.tags.length ? q.tags.join(', ') : 'None';
+    li.appendChild(el('span', { class: 'owner' }, [ ` Tags: ${tagsText}` ]));
     const avgScoreText = q.averageScore == null ? 'N/A' : `${q.averageScore}%`;
     li.appendChild(el('span', { class: 'owner' }, [ ` Average score: ${avgScoreText}` ]));
+    const avgRatingText = q.averageRating == null ? 'N/A' : `${q.averageRating}`;
+    li.appendChild(el('span', { class: 'owner' }, [ ` Rating: ${avgRatingText}` ]));
+    li.appendChild(el('span', { class: 'owner' }, [ ` Submissions: ${Number(q.submissions) || 0}` ]));
     const scoreText = Number.isFinite(Number(q.score)) ? Number(q.score).toFixed(2) : '0.00';
     li.appendChild(el('span', { class: 'owner' }, [ ` Score: ${scoreText}` ]));
     ul.appendChild(li);
@@ -762,6 +909,12 @@ async function editQuiz(id) {
   }
   const titleEl = $('quiz-title'); if (titleEl) titleEl.value = q.title;
   const descEl = $('quiz-description'); if (descEl) descEl.value = q.description || '';
+  const difficultyEl = $('quiz-difficulty'); if (difficultyEl) {
+    const normalizedDifficulty = String(q.difficulty || '').toLowerCase();
+    difficultyEl.value = ['easy', 'medium', 'hard'].includes(normalizedDifficulty) ? normalizedDifficulty : 'medium';
+  }
+  const tagsList = Array.isArray(q.tags) ? q.tags.map(tag => String(tag || '').trim()).filter(Boolean) : [];
+  renderEditorTags(tagsList);
   const showQuestionResultsEl = $('show-question-results'); if (showQuestionResultsEl) showQuestionResultsEl.checked = !!q.showQuestionResults;
   const showCorrectAnswersEl = $('show-correct-answers'); if (showCorrectAnswersEl) showCorrectAnswersEl.checked = !!q.showCorrectAnswersForIncorrect;
   const container = $('questions');
@@ -778,6 +931,8 @@ function loadQuiz(id) {
     const takeSection = $('take-section'); if (takeSection) takeSection.classList.remove('hidden');
     const takeTitle = $('take-title');
     const takeAuthor = $('take-author');
+    const takeDifficulty = $('take-difficulty');
+    const takeTags = $('take-tags');
     const takeAverageScore = $('take-average-score');
     const takeQuizScore = $('take-quiz-score');
     const takeDesc = $('take-desc');
@@ -792,6 +947,8 @@ function loadQuiz(id) {
     if (!form) return;
     form.innerHTML = '';
     if (feedbackHost) feedbackHost.innerHTML = '';
+    if (takeDifficulty) takeDifficulty.textContent = '';
+    if (takeTags) takeTags.textContent = '';
     if (takeAverageScore) takeAverageScore.textContent = '';
     if (takeQuizScore) takeQuizScore.textContent = '';
     if (authorResultsPanel) authorResultsPanel.classList.add('hidden');
@@ -810,6 +967,14 @@ function loadQuiz(id) {
       return;
     }
     if (takeTitle) takeTitle.textContent = q.title || 'Untitled Quiz';
+    if (takeDifficulty) {
+      const difficultyText = q.difficulty ? String(q.difficulty) : 'medium';
+      takeDifficulty.textContent = `Difficulty: ${difficultyText}`;
+    }
+    if (takeTags) {
+      const tagsList = Array.isArray(q.tags) ? q.tags.map(tag => String(tag || '').trim()).filter(Boolean) : [];
+      takeTags.textContent = `Tags: ${tagsList.length ? tagsList.join(', ') : 'None'}`;
+    }
     if (takeAverageScore) {
       const avgScoreText = q.averageScore == null ? 'N/A' : `${q.averageScore}%`;
       takeAverageScore.textContent = `Average score: ${avgScoreText}`;
@@ -1435,6 +1600,11 @@ const addQuestionBtn = $('add-question'); if (addQuestionBtn) addQuestionBtn.add
 const saveQuizBtn = $('save-quiz'); if (saveQuizBtn) saveQuizBtn.addEventListener('click', async () => {
   const title = document.getElementById('quiz-title').value.trim();
   const desc = document.getElementById('quiz-description') ? document.getElementById('quiz-description').value : '';
+  const difficultyRaw = $('quiz-difficulty') ? $('quiz-difficulty').value : 'medium';
+  const tags = readEditorTags();
+  const difficulty = ['easy', 'medium', 'hard'].includes(String(difficultyRaw || '').toLowerCase())
+    ? String(difficultyRaw).toLowerCase()
+    : 'medium';
   const showQuestionResults = $('show-question-results') ? $('show-question-results').checked : false;
   const showCorrectAnswersForIncorrect = $('show-correct-answers') ? $('show-correct-answers').checked : false;
   const blocks = Array.from(document.querySelectorAll('.question-block'));
@@ -1458,7 +1628,7 @@ const saveQuizBtn = $('save-quiz'); if (saveQuizBtn) saveQuizBtn.addEventListene
   saveQuizBtn.textContent = editingId ? 'Updating...' : 'Saving...';
   let nextButtonText = 'Save Quiz';
   if (editingId) {
-    const res = await api('/api/quizzes/' + editingId, { method: 'PUT', body: JSON.stringify({ title, questions, description: desc, showQuestionResults, showCorrectAnswersForIncorrect }) });
+    const res = await api('/api/quizzes/' + editingId, { method: 'PUT', body: JSON.stringify({ title, questions, description: desc, difficulty, tags, showQuestionResults, showCorrectAnswersForIncorrect }) });
     if (res && res.error) {
       alert(res.error);
       saveQuizBtn.disabled = false;
@@ -1469,7 +1639,7 @@ const saveQuizBtn = $('save-quiz'); if (saveQuizBtn) saveQuizBtn.addEventListene
     const ei = $('edit-indicator'); if (ei) ei.classList.add('hidden');
     nextButtonText = 'Save Quiz';
   } else {
-    const res = await api('/api/quizzes', { method: 'POST', body: JSON.stringify({ title, questions, description: desc, showQuestionResults, showCorrectAnswersForIncorrect }) });
+    const res = await api('/api/quizzes', { method: 'POST', body: JSON.stringify({ title, questions, description: desc, difficulty, tags, showQuestionResults, showCorrectAnswersForIncorrect }) });
     if (res && res.error) {
       alert(res.error);
       saveQuizBtn.disabled = false;
@@ -1478,6 +1648,9 @@ const saveQuizBtn = $('save-quiz'); if (saveQuizBtn) saveQuizBtn.addEventListene
     }
   }
   document.getElementById('quiz-title').value = '';
+  if ($('quiz-difficulty')) $('quiz-difficulty').value = 'medium';
+  renderEditorTags([]);
+  if ($('quiz-tag-input')) $('quiz-tag-input').value = '';
   if ($('show-question-results')) $('show-question-results').checked = false;
   if ($('show-correct-answers')) $('show-correct-answers').checked = false;
   document.getElementById('questions').innerHTML = '';
@@ -1490,6 +1663,7 @@ const saveQuizBtn = $('save-quiz'); if (saveQuizBtn) saveQuizBtn.addEventListene
 
 // init
 refreshQuizList();
+initEditorTagControls();
 
 // auth bindings
 const signupBtn = $('signup'); if (signupBtn) signupBtn.addEventListener('click', signup);
@@ -1498,6 +1672,11 @@ const logoutBtn = $('logout'); if (logoutBtn) logoutBtn.addEventListener('click'
 
 // search
 const searchBtn = $('search-btn'); if (searchBtn) searchBtn.addEventListener('click', () => refreshQuizList());
+const sortBySelect = $('sort-by'); if (sortBySelect) sortBySelect.addEventListener('change', () => refreshQuizList());
+const orderBySelect = $('order-by'); if (orderBySelect) orderBySelect.addEventListener('change', () => refreshQuizList());
+const filterUserSelect = $('filter-user'); if (filterUserSelect) filterUserSelect.addEventListener('change', () => refreshQuizList());
+const filterDifficultySelect = $('filter-difficulty'); if (filterDifficultySelect) filterDifficultySelect.addEventListener('change', () => refreshQuizList());
+const filterTagsInput = $('filter-tags'); if (filterTagsInput) filterTagsInput.addEventListener('input', () => refreshQuizList());
 
 const jsonQuizFile = $('json-quiz-file');
 const jsonLoadBtn = $('json-load-btn');

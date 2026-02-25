@@ -446,6 +446,13 @@ app.get('/api/quizzes', async (req, res) => {
     const averageQuizScoreForScore = avgScore == null ? 0 : (avgScore / 100);
     const computedScore = (ratingForScore * 2) + (averageQuizScoreForScore * 10) + Math.log10(submissions + 1);
     const score = Math.round(computedScore * 100) / 100;
+    const rawDifficulty = String(item.difficulty || '').toLowerCase();
+    const difficulty = ['easy', 'medium', 'hard'].includes(rawDifficulty) ? rawDifficulty : 'medium';
+    const tags = Array.isArray(item.tags)
+      ? item.tags.map(tag => String(tag || '').trim()).filter(Boolean)
+      : (typeof item.tags === 'string'
+        ? item.tags.split(',').map(tag => tag.trim()).filter(Boolean)
+        : []);
     return {
       id: item.id,
       title: item.title,
@@ -454,7 +461,9 @@ app.get('/api/quizzes', async (req, res) => {
       averageRating: avg,
       averageScore: avgScore,
       submissions,
-      score
+      score,
+      difficulty,
+      tags
     };
   });
   res.json(list);
@@ -501,8 +510,16 @@ app.get('/api/quizzes/:id/edit', async (req, res) => {
 app.post('/api/quizzes', async (req, res) => {
   const authUser = getAuthUser(req);
   if (!authUser) return res.status(401).json({ error: 'Unauthorized' });
-  const { title, questions, description, showQuestionResults, showCorrectAnswersForIncorrect } = req.body;
+  const { title, questions, description, difficulty, tags, showQuestionResults, showCorrectAnswersForIncorrect } = req.body;
   if (!title || !Array.isArray(questions)) return res.status(400).json({ error: 'Invalid payload' });
+  const normalizedDifficulty = ['easy', 'medium', 'hard'].includes(String(difficulty || '').toLowerCase())
+    ? String(difficulty).toLowerCase()
+    : 'medium';
+  const normalizedTags = Array.isArray(tags)
+    ? tags.map(tag => String(tag || '').trim()).filter(Boolean)
+    : (typeof tags === 'string'
+      ? tags.split(',').map(tag => tag.trim()).filter(Boolean)
+      : []);
   const data = await readData();
   const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
   const quiz = {
@@ -511,6 +528,8 @@ app.post('/api/quizzes', async (req, res) => {
     questions,
     owner: authUser.id,
     description: description || '',
+    difficulty: normalizedDifficulty,
+    tags: normalizedTags,
     showQuestionResults: !!showQuestionResults,
     showCorrectAnswersForIncorrect: !!showCorrectAnswersForIncorrect
   };
@@ -522,8 +541,16 @@ app.post('/api/quizzes', async (req, res) => {
 app.put('/api/quizzes/:id', async (req, res) => {
   const authUser = getAuthUser(req);
   if (!authUser) return res.status(401).json({ error: 'Unauthorized' });
-  const { title, questions, description, showQuestionResults, showCorrectAnswersForIncorrect } = req.body;
+  const { title, questions, description, difficulty, tags, showQuestionResults, showCorrectAnswersForIncorrect } = req.body;
   if (!title || !Array.isArray(questions)) return res.status(400).json({ error: 'Invalid payload' });
+  const normalizedDifficulty = ['easy', 'medium', 'hard'].includes(String(difficulty || '').toLowerCase())
+    ? String(difficulty).toLowerCase()
+    : 'medium';
+  const normalizedTags = Array.isArray(tags)
+    ? tags.map(tag => String(tag || '').trim()).filter(Boolean)
+    : (typeof tags === 'string'
+      ? tags.split(',').map(tag => tag.trim()).filter(Boolean)
+      : []);
   const data = await readData();
   const idx = data.findIndex(item => item.id === req.params.id);
   if (idx === -1) return res.status(404).json({ error: 'Not found' });
@@ -533,6 +560,8 @@ app.put('/api/quizzes/:id', async (req, res) => {
   data[idx].questions = questions;
   data[idx].owner = data[idx].owner || authUser.id;
   data[idx].description = description || data[idx].description || '';
+  data[idx].difficulty = normalizedDifficulty;
+  data[idx].tags = normalizedTags;
   data[idx].showQuestionResults = !!showQuestionResults;
   data[idx].showCorrectAnswersForIncorrect = !!showCorrectAnswersForIncorrect;
   await writeData(data);
