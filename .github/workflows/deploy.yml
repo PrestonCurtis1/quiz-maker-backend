@@ -3,6 +3,7 @@ name: Deploy to Production
 on:
   push:
     branches: [ main ]
+  workflow_dispatch:  # This adds the "Run workflow" button in GitHub Actions
 
 jobs:
   deploy:
@@ -19,3 +20,18 @@ jobs:
             git pull
             npm install --production
             pm2 restart 0
+
+      # --- DISCORD NOTIFICATION STEPS ---
+      - name: Discord Success Notification
+        if: success()
+        uses: Ilshidur/action-discord@master
+        with:
+          args: '🚀 **Deployment Successful!** Code deployed to production.'
+          webhook_url: ${{ secrets.DISCORD_WEBHOOK }}
+
+      - name: Discord Failure Notification
+        if: failure()
+        uses: Ilshidur/action-discord@master
+        with:
+          args: '❌ **Deployment Failed!** Check the GitHub Actions logs for details.'
+          webhook_url: ${{ secrets.DISCORD_WEBHOOK }}
