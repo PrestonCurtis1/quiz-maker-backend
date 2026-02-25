@@ -476,7 +476,7 @@ async function refreshQuizList() {
   users.forEach(u => { if (u && u.id) userMap[u.id] = u.username || u.id; });
   (list || []).forEach(q => {
     const li = el('li');
-    const btn = el('button', { type: 'button', onclick: () => { window.location.href = '/take.html?quiz=' + encodeURIComponent(q.id); } }, [ q.title ]);
+    const btn = el('button', { type: 'button', onclick: () => { window.location.href = '/share/' + encodeURIComponent(q.id); } }, [ q.title ]);
     li.appendChild(btn);
     if (q.owner) {
       const ownerName = userMap[q.owner] || q.owner;
@@ -648,12 +648,14 @@ function loadQuiz(id) {
     const form = $('take-form');
     const feedbackHost = $('submission-feedback');
     const downloadBtn = $('download-quiz-btn');
+    const shareBtn = $('share-quiz-btn');
     const moderatorDeleteBtn = $('moderator-delete-quiz-btn');
     if (!form) return;
     form.innerHTML = '';
     if (feedbackHost) feedbackHost.innerHTML = '';
     if (takeAuthor) takeAuthor.innerHTML = '';
     if (downloadBtn) downloadBtn.onclick = null;
+    if (shareBtn) shareBtn.onclick = null;
     if (moderatorDeleteBtn) {
       moderatorDeleteBtn.classList.add('hidden');
       moderatorDeleteBtn.onclick = null;
@@ -688,6 +690,33 @@ function loadQuiz(id) {
         a.click();
         a.remove();
         URL.revokeObjectURL(url);
+      };
+    }
+
+    if (shareBtn) {
+      shareBtn.onclick = async () => {
+        const shareUrl = window.location.origin + '/share/' + encodeURIComponent(q.id);
+        const shareData = {
+          title: q.title || 'Quiz',
+          text: 'Try this quiz!',
+          url: shareUrl
+        };
+        try {
+          if (navigator.share) {
+            await navigator.share(shareData);
+            return;
+          }
+        } catch (err) {}
+
+        try {
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(shareUrl);
+            alert('Share link copied to clipboard');
+            return;
+          }
+        } catch (err) {}
+
+        prompt('Copy this share link:', shareUrl);
       };
     }
 
@@ -1221,7 +1250,7 @@ async function initProfilePage() {
     uq.innerHTML = '';
     quizzes.forEach(q => {
       const li = el('li');
-      const a = el('a', { href: '/take.html?quiz=' + encodeURIComponent(q.id) }, [ q.title ]);
+      const a = el('a', { href: '/share/' + encodeURIComponent(q.id) }, [ q.title ]);
       li.appendChild(a);
       // if viewing own profile, show edit button for each quiz
       if (cur && cur.id === userId) {

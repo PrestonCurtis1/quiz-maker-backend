@@ -23,6 +23,7 @@ const JWT_SECRET = process.env.JWT_SECRET || 'change-this-secret-in-production';
 const SSL_KEY_PATH = process.env.SSL_KEY_PATH || '';
 const SSL_CERT_PATH = process.env.SSL_CERT_PATH || '';
 const SSL_CA_PATH = process.env.SSL_CA_PATH || '';
+const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || 'https://quiz-maker.bendinghub.net';
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
@@ -264,6 +265,84 @@ function formatCorrectAnswerForDisplay(question) {
   }
   return null;
 }
+
+function escapeHtml(value) {
+  return String(value == null ? '' : value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function getPublicBaseUrl(req) {
+  const configured = String(PUBLIC_BASE_URL || '').trim();
+  if (configured) return configured.replace(/\/+$/, '');
+
+  const forwardedProtoHeader = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim();
+  const proto = forwardedProtoHeader || req.protocol || 'http';
+  const forwardedHost = String(req.headers['x-forwarded-host'] || '').split(',')[0].trim();
+  const host = forwardedHost || req.get('host') || 'localhost';
+  return `${proto}://${host}`;
+}
+
+app.get('/share/:id', async (req, res) => {
+  const data = await readData();
+  const quiz = data.find(item => item.id === req.params.id);
+  if (!quiz) return res.status(404).send('Quiz not found');
+
+  const ratings = await readRatings();
+  const users = await readUsers();
+
+  const quizRatings = ratings.filter(r => r.quizId === quiz.id);
+  const avgRating = quizRatings.length
+    ? Math.round((quizRatings.reduce((sum, r) => sum + (Number(r.rating) || 0), 0) / quizRatings.length) * 10) / 10
+    : null;
+
+  const ownerUser = users.find(u => u && u.id === quiz.owner);
+  const ownerName = ownerUser ? ownerUser.username : (quiz.owner || 'Unknown');
+  const questionCount = Array.isArray(quiz.questions) ? quiz.questions.length : 0;
+  const infoParts = [`${questionCount} question${questionCount === 1 ? '' : 's'}`];
+  if (avgRating != null) infoParts.push(`${avgRating}/5 rating`);
+  if (ownerName) infoParts.push(`by ${ownerName}`);
+
+  const shortDescriptionSource = String(quiz.description || '').replace(/\s+/g, ' ').trim();
+  const fallbackDescription = `Play this quiz • ${infoParts.join(' • ')}`;
+  const description = (shortDescriptionSource || fallbackDescription).slice(0, 280);
+
+  const baseUrl = getPublicBaseUrl(req);
+  const sharePath = `/share/${encodeURIComponent(quiz.id)}`;
+  const playPath = `/take.html?quiz=${encodeURIComponent(quiz.id)}`;
+  const shareUrl = `${baseUrl}${sharePath}`;
+  const imageUrl = quiz.owner
+    ? `${baseUrl}/avatars/${encodeURIComponent(quiz.owner)}`
+    : `${baseUrl}/default-avatar.png`;
+
+  const title = `🧠 ${String(quiz.title || 'Quiz')}`;
+
+  res.type('html').send(`<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>${escapeHtml(title)}</title>
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="${escapeHtml(title)}" />
+  <meta property="og:description" content="${escapeHtml(description)}" />
+  <meta property="og:url" content="${escapeHtml(shareUrl)}" />
+  <meta property="og:image" content="${escapeHtml(imageUrl)}" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="${escapeHtml(title)}" />
+  <meta name="twitter:description" content="${escapeHtml(description)}" />
+  <meta name="twitter:image" content="${escapeHtml(imageUrl)}" />
+</head>
+<body>
+  <p>Opening quiz…</p>
+  <p><a href="${escapeHtml(playPath)}">Continue to quiz</a></p>
+  <script>window.location.replace(${JSON.stringify(playPath)});</script>
+</body>
+</html>`);
+});
 
 app.get('/api/quizzes', async (req, res) => {
   const data = await readData();

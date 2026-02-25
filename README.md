@@ -27,6 +27,7 @@ Optional env vars:
 
 - `SSL_CA_PATH` (CA bundle, if needed)
 - `ENABLE_HTTP_REDIRECT=false` to disable HTTP -> HTTPS redirect
+- `PUBLIC_BASE_URL=https://your-domain.com` (recommended for correct social embed URLs)
 
 If cert files are not configured or not found, the server falls back to HTTP on `PORT` (default `3000`).
 
@@ -36,3 +37,16 @@ Create/edit pages include a built-in prompt generator that creates a starter qui
 No external API key is required.
 
 You can also generate a draft quiz from a study guide PDF on create/edit pages.
+
+## Discord Embeds
+
+Share quiz links using:
+
+`/share/<quizId>`
+
+Example:
+
+`https://your-domain.com/share/abc123`
+
+This route serves Open Graph tags (title/description/image) for Discord/Twitter previews,
+then redirects users to `take.html` automatically.
