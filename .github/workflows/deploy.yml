@@ -1,4 +1,30 @@
-# --- DISCORD DM NOTIFICATION STEP ---
+name: Deploy to Production
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Deploy to Server via SSH
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          passphrase: ${{ secrets.SSH_PRIVATE_KEY_PASSPHRASE }}
+          script: |
+            cd quiz-maker-backend/
+            git pull
+            npm install --production
+            pm2 restart 0
+
       - name: Send Discord DMs
         if: always()
         env:
@@ -7,8 +33,7 @@
           STATUS: ${{ job.status }}
         run: |
           for USER_ID in $USER_IDS; do
-            # Create/Get DM Channel
-            # The API returns the channel object; we specifically need the ID of the DM channel.
+            # 1. Create DM channel
             CHANNEL_DATA=$(curl -s -X POST https://discord.com/api/v10/users/@me/channels \
               -H "Authorization: Bot $DISCORD_TOKEN" \
               -H "Content-Type: application/json" \
@@ -17,19 +42,19 @@
             DM_CHANNEL_ID=$(echo $CHANNEL_DATA | jq -r '.id')
             CHANNEL_TYPE=$(echo $CHANNEL_DATA | jq -r '.type')
 
-            # Verify it is a DM channel (type 1)
+            # 2. Check if DM channel (type 1) was created
             if [ "$CHANNEL_TYPE" == "1" ]; then
-                if [ "$STATUS" == "success" ]; then
-                  MSG="🚀 **Deployment Successful!** Code is live: https://your-quiz-maker-website.com"
-                else
-                  MSG="❌ **Deployment Failed!** Check your GitHub Actions logs for details."
-                fi
-
-                curl -s -X POST https://discord.com/api/v10/channels/$DM_CHANNEL_ID/messages \
-                  -H "Authorization: Bot $DISCORD_TOKEN" \
-                  -H "Content-Type: application/json" \
-                  -d "{\"content\": \"$MSG\"}"
+              if [ "$STATUS" == "success" ]; then
+                MSG="🚀 **Deployment Successful!** Quiz-Maker is live: https://your-quiz-maker-website.com"
+              else
+                MSG="❌ **Deployment Failed!** Check your GitHub Actions logs for details."
+              fi
+              
+              curl -s -X POST https://discord.com/api/v10/channels/$DM_CHANNEL_ID/messages \
+                -H "Authorization: Bot $DISCORD_TOKEN" \
+                -H "Content-Type: application/json" \
+                -d "{\"content\": \"$MSG\"}"
             else
-                echo "Failed to initiate DM channel for $USER_ID. API Response: $CHANNEL_DATA"
+              echo "Error: Could not create DM channel for $USER_ID. API response: $CHANNEL_DATA"
             fi
           done
