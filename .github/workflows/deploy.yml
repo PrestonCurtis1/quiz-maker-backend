@@ -33,28 +33,25 @@ jobs:
           STATUS: ${{ job.status }}
         run: |
           for USER_ID in $USER_IDS; do
-            # 1. Create DM channel
+            # Create/Get DM Channel
             CHANNEL_DATA=$(curl -s -X POST https://discord.com/api/v10/users/@me/channels \
               -H "Authorization: Bot $DISCORD_TOKEN" \
               -H "Content-Type: application/json" \
               -d "{\"recipient_id\": \"$USER_ID\"}")
             
+            # Extract ID and Type
             DM_CHANNEL_ID=$(echo $CHANNEL_DATA | jq -r '.id')
             CHANNEL_TYPE=$(echo $CHANNEL_DATA | jq -r '.type')
 
-            # 2. Check if DM channel (type 1) was created
+            # Force check: Only proceed if it's a DM (Type 1)
             if [ "$CHANNEL_TYPE" == "1" ]; then
-              if [ "$STATUS" == "success" ]; then
-                MSG="🚀 **Deployment Successful!** Quiz-Maker is live: https://your-quiz-maker-website.com"
-              else
-                MSG="❌ **Deployment Failed!** Check your GitHub Actions logs for details."
-              fi
+              MSG=$([ "$STATUS" == "success" ] && echo "🚀 **Deployment Successful!** Quiz-Maker is live." || echo "❌ **Deployment Failed!**")
               
               curl -s -X POST https://discord.com/api/v10/channels/$DM_CHANNEL_ID/messages \
                 -H "Authorization: Bot $DISCORD_TOKEN" \
                 -H "Content-Type: application/json" \
                 -d "{\"content\": \"$MSG\"}"
             else
-              echo "Error: Could not create DM channel for $USER_ID. API response: $CHANNEL_DATA"
+              echo "Target channel for $USER_ID is not a DM (Type 1). API response: $CHANNEL_DATA"
             fi
           done
