@@ -767,6 +767,63 @@ app.post('/api/quizzes/:id/submit', async (req, res) => {
   res.json(payload);
 });
 
+app.get('/api/quizzes/:id/results', async (req, res) => {
+  const authUser = getAuthUser(req);
+  if (!authUser) return res.status(401).json({ error: 'Unauthorized' });
+
+  const data = await readData();
+  const quiz = data.find(item => item.id === req.params.id);
+  if (!quiz) return res.status(404).json({ error: 'Not found' });
+
+  const canModerate = await isModerator(authUser.id);
+  const isOwner = !!quiz.owner && quiz.owner === authUser.id;
+  if (!canModerate && !isOwner) return res.status(403).json({ error: 'Forbidden' });
+
+  const results = await readResults();
+  const quizResults = results
+    .filter(r => r.quizId === req.params.id)
+    .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+    .map(r => ({
+      id: r.id,
+      quizId: r.quizId,
+      userId: r.userId || null,
+      score: Number(r.score) || 0,
+      correct: Number.isFinite(Number(r.raw)) ? Number(r.raw) : 0,
+      total: Number(r.totalQuestions) || 0,
+      timestamp: r.timestamp
+    }));
+
+  res.json(quizResults);
+});
+
+app.get('/api/quizzes/:id/results/:resultId', async (req, res) => {
+  const authUser = getAuthUser(req);
+  if (!authUser) return res.status(401).json({ error: 'Unauthorized' });
+
+  const data = await readData();
+  const quiz = data.find(item => item.id === req.params.id);
+  if (!quiz) return res.status(404).json({ error: 'Not found' });
+
+  const canModerate = await isModerator(authUser.id);
+  const isOwner = !!quiz.owner && quiz.owner === authUser.id;
+  if (!canModerate && !isOwner) return res.status(403).json({ error: 'Forbidden' });
+
+  const results = await readResults();
+  const result = results.find(r => r.id === req.params.resultId && r.quizId === req.params.id);
+  if (!result) return res.status(404).json({ error: 'Result not found' });
+
+  res.json({
+    id: result.id,
+    quizId: result.quizId,
+    userId: result.userId || null,
+    score: Number(result.score) || 0,
+    correct: Number.isFinite(Number(result.raw)) ? Number(result.raw) : 0,
+    total: Number(result.totalQuestions) || 0,
+    timestamp: result.timestamp,
+    answers: Array.isArray(result.answers) ? result.answers : []
+  });
+});
+
 // ratings endpoints
 app.post('/api/quizzes/:id/rate', async (req, res) => {
   const { rating, review, resultId } = req.body;

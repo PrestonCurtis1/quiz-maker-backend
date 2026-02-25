@@ -23,6 +23,7 @@ button.danger-btn[type="button"]:hover{background:#b91c1c}
 .owner{color:var(--muted);font-size:13px}
 #edit-indicator{background:#fff7ed;border:1px solid #ffedd5;padding:8px;border-radius:6px;margin-bottom:8px}
 #result{margin-top:12px;padding:8px;background:#f3f4f6;border-radius:6px}
+.take-question{border:1px solid #e6e9ef;border-radius:10px;padding:12px;margin:10px 0;background:#fafbff}
 .question-header{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px}
 .question-actions{display:flex;gap:6px;flex-wrap:wrap}
 .question-actions button{padding:5px 8px;font-size:12px}
@@ -62,6 +63,7 @@ label.editor-option{display:block;margin:6px 0;color:#374151}
 body.dark{ --bg:#0b1220; --card:#0f1724; --muted:#9ca3af; --accent:#7c9cff; color:#e6eefb }
 body.dark a{ color:var(--accent) }
 body.dark section#take-section div#result{ background:#1e293b }
+body.dark .take-question{ background:#0f1626; border-color:#22314d }
 body.dark div#edit-indicator{ background:#1e293b; border:1px solid #334155; color:#e6eefb }
 body.dark input,body.dark textarea{ background:#0b1220; border:1px solid #172033; color:#e6eefb }
 body.dark select{ background:#0b1220; border:1px solid #172033; color:#e6eefb }

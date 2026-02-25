@@ -777,12 +777,18 @@ function loadQuiz(id) {
     const takeDesc = $('take-desc');
     const form = $('take-form');
     const feedbackHost = $('submission-feedback');
+    const authorResultsPanel = $('author-results-panel');
+    const authorResultsList = $('author-results-list');
+    const authorResultDetail = $('author-result-detail');
     const downloadBtn = $('download-quiz-btn');
     const shareBtn = $('share-quiz-btn');
     const deleteQuizBtn = $('moderator-delete-quiz-btn');
     if (!form) return;
     form.innerHTML = '';
     if (feedbackHost) feedbackHost.innerHTML = '';
+    if (authorResultsPanel) authorResultsPanel.classList.add('hidden');
+    if (authorResultsList) authorResultsList.innerHTML = '';
+    if (authorResultDetail) authorResultDetail.innerHTML = '';
     if (takeAuthor) takeAuthor.innerHTML = '';
     if (downloadBtn) downloadBtn.onclick = null;
     if (shareBtn) shareBtn.onclick = null;
@@ -865,11 +871,13 @@ function loadQuiz(id) {
     }
 
     const currentUser = getCurrentUser();
-    if (deleteQuizBtn && currentUser && currentUser.id) {
+    let canViewAuthorResults = false;
+    if (currentUser && currentUser.id) {
       const isOwner = !!q.owner && q.owner === currentUser.id;
       const currentRoles = await fetchRolesForUser(currentUser.id);
       const canModerate = currentRoles.includes('moderator') || currentRoles.includes('admin');
-      if (isOwner || canModerate) {
+      canViewAuthorResults = isOwner || canModerate;
+      if (deleteQuizBtn && (isOwner || canModerate)) {
         deleteQuizBtn.classList.remove('hidden');
         deleteQuizBtn.onclick = async () => {
           if (!confirm('Delete this quiz permanently?')) return;
@@ -880,6 +888,301 @@ function loadQuiz(id) {
         };
       }
     }
+
+    let answerKeyQuestions = Array.isArray(q.questions) ? q.questions : [];
+    if (canViewAuthorResults) {
+      const quizWithAnswers = await api('/api/quizzes/' + id + '/edit');
+      if (quizWithAnswers && !quizWithAnswers.error && Array.isArray(quizWithAnswers.questions)) {
+        answerKeyQuestions = quizWithAnswers.questions;
+      }
+    }
+
+    async function loadAuthorResults() {
+      if (!authorResultsPanel || !authorResultsList || !canViewAuthorResults) return;
+      const usersRes = await api('/api/users');
+      const users = Array.isArray(usersRes) ? usersRes : [];
+      const userMap = {};
+      users.forEach(u => { if (u && u.id) userMap[u.id] = u.username || u.id; });
+
+      const resultsRes = await api('/api/quizzes/' + id + '/results');
+      if (resultsRes && resultsRes.error) return;
+
+      const results = Array.isArray(resultsRes) ? resultsRes : [];
+      authorResultsPanel.classList.remove('hidden');
+      authorResultsList.innerHTML = '';
+      if (authorResultDetail) authorResultDetail.innerHTML = '';
+
+      function formatSubmittedAnswer(question, answerValue) {
+        const type = question && question.type ? question.type : 'multiple';
+
+        if (type === 'multiple') {
+          if (!Array.isArray(question.options)) return answerValue == null ? '(no answer)' : String(answerValue);
+          if (answerValue == null || !Number.isFinite(Number(answerValue))) return '(no answer)';
+          const idx = Number(answerValue);
+          return question.options[idx] != null ? String(question.options[idx]) : String(idx);
+        }
+
+        if (type === 'multi') {
+          if (!Array.isArray(question.options)) return '(no answer)';
+          const picked = Array.isArray(answerValue) ? answerValue.map(v => Number(v)).filter(v => Number.isFinite(v)) : [];
+          if (!picked.length) return '(no answer)';
+          return picked.map(idx => (question.options[idx] != null ? String(question.options[idx]) : String(idx))).join(', ');
+        }
+
+        if (type === 'matching') {
+          const leftItems = Array.isArray(question.leftItems)
+            ? question.leftItems
+            : (Array.isArray(question.pairs) ? question.pairs.map(p => p.left) : []);
+          const rights = Array.isArray(answerValue) ? answerValue : [];
+          if (!leftItems.length || !rights.length) return '(no answer)';
+          const pairs = leftItems.map((left, idx) => `${left} → ${rights[idx] || '(blank)'}`);
+          return pairs.join(' | ');
+        }
+
+        if (type === 'number') {
+          if (answerValue == null || answerValue === '') return '(no answer)';
+          return String(answerValue);
+        }
+
+        if (type === 'text' || type === 'fill') {
+          if (answerValue == null) return '(no answer)';
+          const text = String(answerValue).trim();
+          return text ? text : '(no answer)';
+        }
+
+        if (type === 'truefalse') {
+          if (typeof answerValue !== 'boolean') return '(no answer)';
+          return answerValue ? 'True' : 'False';
+        }
+
+        if (answerValue == null) return '(no answer)';
+        if (Array.isArray(answerValue)) return answerValue.join(', ');
+        return String(answerValue);
+      }
+
+      function normalizeTextAnswer(value) {
+        if (value == null) return '';
+        return String(value).trim().toLowerCase();
+      }
+
+      function toIntegerOrNull(value) {
+        const parsed = parseInt(value, 10);
+        return Number.isFinite(parsed) ? parsed : null;
+      }
+
+      function toNumberOrNull(value) {
+        const parsed = (typeof value === 'number') ? value : parseFloat(value);
+        return Number.isFinite(parsed) ? parsed : null;
+      }
+
+      function isSubmittedAnswerCorrect(question, answerValue) {
+        const type = question && question.type ? question.type : 'multiple';
+
+        if (type === 'multiple') {
+          const selected = toIntegerOrNull(answerValue);
+          const expected = toIntegerOrNull(question.correct);
+          return selected != null && expected != null && selected === expected;
+        }
+
+        if (type === 'multi') {
+          const options = Array.isArray(question.options) ? question.options : [];
+          const correctAnswers = (Array.isArray(question.correct) ? question.correct : [])
+            .map(toIntegerOrNull)
+            .filter(value => value != null);
+          const selected = (Array.isArray(answerValue) ? answerValue : [])
+            .map(toIntegerOrNull)
+            .filter(value => value != null);
+          let matches = 0;
+          for (let optionIndex = 0; optionIndex < options.length; optionIndex++) {
+            const shouldSelect = correctAnswers.includes(optionIndex);
+            const didSelect = selected.includes(optionIndex);
+            if ((shouldSelect && didSelect) || (!shouldSelect && !didSelect)) {
+              matches++;
+            }
+          }
+          const totalOptions = options.length || 1;
+          return (matches / totalOptions) >= 0.999;
+        }
+
+        if (type === 'matching') {
+          const pairs = Array.isArray(question.pairs) ? question.pairs : [];
+          const picked = Array.isArray(answerValue) ? answerValue : [];
+          if (!pairs.length) return false;
+          let matched = 0;
+          pairs.forEach((pair, idx) => {
+            if (picked[idx] === pair.right) matched++;
+          });
+          return (matched / pairs.length) >= 0.999;
+        }
+
+        if (type === 'text' || type === 'fill') {
+          const expected = Array.isArray(question.answer) ? question.answer : [question.answer];
+          const submitted = normalizeTextAnswer(answerValue);
+          return expected.map(normalizeTextAnswer).includes(submitted) && submitted.length > 0;
+        }
+
+        if (type === 'number') {
+          const expected = (Array.isArray(question.answer) ? question.answer : [question.answer])
+            .map(toNumberOrNull)
+            .filter(value => value != null);
+          const submitted = toNumberOrNull(answerValue);
+          if (submitted == null || !expected.length) return false;
+          const epsilon = 1e-9;
+          return expected.some(value => Math.abs(value - submitted) <= epsilon);
+        }
+
+        if (type === 'truefalse') {
+          return typeof answerValue === 'boolean' && typeof question.correct === 'boolean' && answerValue === question.correct;
+        }
+
+        return false;
+      }
+
+      function formatCorrectAnswer(question) {
+        const type = question && question.type ? question.type : 'multiple';
+
+        if (type === 'multiple') {
+          const idx = toIntegerOrNull(question.correct);
+          if (idx == null || !Array.isArray(question.options)) return '(not set)';
+          return question.options[idx] != null ? String(question.options[idx]) : String(idx);
+        }
+
+        if (type === 'multi') {
+          if (!Array.isArray(question.options)) return '(not set)';
+          const indices = (Array.isArray(question.correct) ? question.correct : [])
+            .map(toIntegerOrNull)
+            .filter(value => value != null);
+          if (!indices.length) return '(not set)';
+          return indices
+            .map(idx => (question.options[idx] != null ? String(question.options[idx]) : String(idx)))
+            .join(', ');
+        }
+
+        if (type === 'matching') {
+          const pairs = Array.isArray(question.pairs) ? question.pairs : [];
+          if (!pairs.length) return '(not set)';
+          return pairs.map(pair => `${pair.left} → ${pair.right}`).join(' | ');
+        }
+
+        if (type === 'text' || type === 'fill') {
+          const expected = Array.isArray(question.answer) ? question.answer : [question.answer];
+          const cleaned = expected.map(value => String(value == null ? '' : value).trim()).filter(Boolean);
+          return cleaned.length ? cleaned.join(', ') : '(not set)';
+        }
+
+        if (type === 'number') {
+          const expected = Array.isArray(question.answer) ? question.answer : [question.answer];
+          const cleaned = expected.map(value => String(value == null ? '' : value).trim()).filter(Boolean);
+          return cleaned.length ? cleaned.join(', ') : '(not set)';
+        }
+
+        if (type === 'truefalse') {
+          if (typeof question.correct !== 'boolean') return '(not set)';
+          return question.correct ? 'True' : 'False';
+        }
+
+        return '(not set)';
+      }
+
+      function closeAuthorResultOverlay() {
+        const existing = document.getElementById('author-result-overlay');
+        if (existing) {
+          document.removeEventListener('keydown', onAuthorResultOverlayKeyDown);
+          existing.remove();
+        }
+      }
+
+      function onAuthorResultOverlayKeyDown(event) {
+        if (event.key === 'Escape') closeAuthorResultOverlay();
+      }
+
+      async function showAuthorResultDetail(resultId, label) {
+        closeAuthorResultOverlay();
+
+        const overlay = document.createElement('div');
+        overlay.id = 'author-result-overlay';
+        overlay.className = 'ai-draft-overlay';
+
+        const modal = document.createElement('div');
+        modal.className = 'ai-draft-modal';
+        modal.setAttribute('role', 'dialog');
+        modal.setAttribute('aria-modal', 'true');
+
+        const title = el('h3', {}, [ `Submission: ${label}` ]);
+        const loading = el('div', {}, [ 'Loading submission...' ]);
+        const closeBtn = el('button', {
+          type: 'button',
+          onclick: () => closeAuthorResultOverlay()
+        }, [ 'Close' ]);
+
+        modal.appendChild(title);
+        modal.appendChild(loading);
+        modal.appendChild(closeBtn);
+        overlay.appendChild(modal);
+        document.body.appendChild(overlay);
+        document.addEventListener('keydown', onAuthorResultOverlayKeyDown);
+        overlay.addEventListener('click', event => {
+          if (event.target === overlay) closeAuthorResultOverlay();
+        });
+
+        const resultRes = await api('/api/quizzes/' + id + '/results/' + resultId);
+        if (resultRes && resultRes.error) {
+          loading.textContent = resultRes.error || 'Unable to load submission.';
+          return;
+        }
+
+        const answers = Array.isArray(resultRes.answers) ? resultRes.answers : [];
+        const list = el('ol');
+
+        answerKeyQuestions.forEach((question, qi) => {
+          const item = el('li');
+          const questionLine = el('div');
+          questionLine.innerHTML = renderQuestionText(question.text || `Question ${qi + 1}`);
+          const correctness = isSubmittedAnswerCorrect(question, answers[qi]);
+          const statusLine = el('div', {}, [ correctness ? '✅ Correct' : '❌ Incorrect' ]);
+          const answerLine = el('div');
+          answerLine.innerHTML = renderQuestionText('Answer: ' + formatSubmittedAnswer(question, answers[qi]));
+          item.appendChild(statusLine);
+          item.appendChild(questionLine);
+          item.appendChild(answerLine);
+          if (!correctness) {
+            const expectedLine = el('div');
+            expectedLine.innerHTML = renderQuestionText('Expected: ' + formatCorrectAnswer(question));
+            item.appendChild(expectedLine);
+          }
+          list.appendChild(item);
+        });
+
+        if (loading.parentNode) loading.remove();
+        modal.insertBefore(list, closeBtn);
+      }
+
+      if (results.length === 0) {
+        authorResultsList.appendChild(el('li', {}, ['No submissions yet.']));
+        return;
+      }
+
+      results.forEach(r => {
+        const who = r.userId ? (userMap[r.userId] || r.userId) : 'Anonymous';
+        const detail = `${r.score}% (${r.correct}/${r.total})`;
+        const when = r.timestamp ? new Date(r.timestamp).toLocaleString() : '';
+        const label = `${who} — ${detail}`;
+        const link = el('a', {
+          href: '#',
+          onclick: async (event) => {
+            event.preventDefault();
+            await showAuthorResultDetail(r.id, label);
+          }
+        }, [ label ]);
+        const row = el('li', {}, [
+          el('strong', {}, [ link ]),
+          el('div', {}, [ when ])
+        ]);
+        authorResultsList.appendChild(row);
+      });
+    }
+
+    await loadAuthorResults();
 
     if (takeAuthor) {
       if (q.owner) {
