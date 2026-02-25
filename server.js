@@ -14,6 +14,7 @@ const DATA_FILE = path.join(DATA_DIR, 'quizzes.json');
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const RATINGS_FILE = path.join(DATA_DIR, 'ratings.json');
 const UPLOAD_DIR = path.join(__dirname, 'public', 'uploads');
+const DEFAULT_AVATAR_FILE = path.join(__dirname, 'public', 'default-avatar.png');
 const PORT = process.env.PORT || 80;
 const HTTPS_PORT = process.env.HTTPS_PORT || 443;
 const HTTP_REDIRECT_PORT = process.env.HTTP_PORT || 80;
@@ -24,6 +25,17 @@ const SSL_CA_PATH = process.env.SSL_CA_PATH || '';
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
+
+async function readJsonArrayFile(filePath) {
+  const txt = await fs.readFile(filePath, 'utf8');
+  let parsed;
+  try {
+    parsed = JSON.parse(txt || '[]');
+  } catch (err) {
+    return [];
+  }
+  return Array.isArray(parsed) ? parsed : [];
+}
 
 async function ensureDataFile() {
   try {
@@ -53,8 +65,7 @@ async function ensureDataFile() {
 
 async function readRatings() {
   await ensureDataFile();
-  const txt = await fs.readFile(RATINGS_FILE, 'utf8');
-  return JSON.parse(txt || '[]');
+  return readJsonArrayFile(RATINGS_FILE);
 }
 
 async function writeRatings(data) {
@@ -63,8 +74,7 @@ async function writeRatings(data) {
 
 async function readResults() {
   await ensureDataFile();
-  const txt = await fs.readFile(RESULTS_FILE, 'utf8');
-  return JSON.parse(txt || '[]');
+  return readJsonArrayFile(RESULTS_FILE);
 }
 
 async function writeResults(data) {
@@ -86,8 +96,7 @@ async function ensureHashedPasswords() {
 
 async function readUsers() {
   await ensureDataFile();
-  const txt = await fs.readFile(USERS_FILE, 'utf8');
-  return JSON.parse(txt || '[]');
+  return readJsonArrayFile(USERS_FILE);
 }
 
 async function writeUsers(data) {
@@ -96,8 +105,7 @@ async function writeUsers(data) {
 
 async function readData() {
   await ensureDataFile();
-  const txt = await fs.readFile(DATA_FILE, 'utf8');
-  return JSON.parse(txt || '[]');
+  return readJsonArrayFile(DATA_FILE);
 }
 
 async function writeData(data) {
@@ -126,6 +134,28 @@ function requireAuth(req, res, next) {
   if (!user) return res.status(401).json({ error: 'Unauthorized' });
   req.authUser = user;
   next();
+}
+
+function resolveAvatarFileForUser(userId) {
+  const safeId = String(userId || '').trim();
+  if (!/^[a-zA-Z0-9_-]+$/.test(safeId)) return DEFAULT_AVATAR_FILE;
+
+  const preferredExts = ['.png', '.webp', '.jpg', '.jpeg', '.gif'];
+  for (const ext of preferredExts) {
+    const candidate = path.join(UPLOAD_DIR, safeId + ext);
+    if (fsSync.existsSync(candidate)) return candidate;
+  }
+
+  try {
+    const files = fsSync.readdirSync(UPLOAD_DIR);
+    const fallback = files.find(name => name.startsWith(safeId + '.'));
+    if (fallback) {
+      const full = path.join(UPLOAD_DIR, fallback);
+      if (fsSync.existsSync(full)) return full;
+    }
+  } catch (err) {}
+
+  return DEFAULT_AVATAR_FILE;
 }
 
 function sanitizeQuestionForPublic(question) {
@@ -308,6 +338,12 @@ app.get('/api/users/:id/profile', async (req, res) => {
   const count = userResults.length;
   const avg = count ? Math.round(userResults.reduce((s, r) => s + r.score, 0) / count) : 0;
   res.json({ userId: req.params.id, quizCount: count, averageScore: avg });
+});
+
+app.get('/avatars/:id', (req, res) => {
+  const avatarFile = resolveAvatarFileForUser(req.params.id);
+  res.set('Cache-Control', 'no-cache');
+  res.sendFile(avatarFile);
 });
 
 app.post('/api/quizzes/:id/submit', async (req, res) => {

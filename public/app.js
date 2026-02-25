@@ -1110,20 +1110,57 @@ async function initProfilePage() {
 
   setActiveProfileTab('profile');
 
-  const avatarImg = $('profile-avatar'); if (avatarImg) {
-    // set fallback in case avatar URL is broken
-    avatarImg.onerror = () => { avatarImg.src = 'default-avatar.png'; };
-    // prefer avatar from users list, fall back to profile response
-    let avatarPath = null;
-    if (userObj && userObj.avatar) avatarPath = userObj.avatar;
-    else if (profile && profile.avatar) avatarPath = profile.avatar;
-    if (avatarPath) {
-      let url = avatarPath;
-      if (!url.startsWith('/')) url = '/' + url;
-      avatarImg.src = url;
-    } else {
-      console.warn('No avatar found for user', userId);
+  function normalizeAvatarUrl(rawValue) {
+    if (!rawValue || typeof rawValue !== 'string') return null;
+    const raw = rawValue.trim();
+    if (!raw) return null;
+
+    if (/^https?:\/\//i.test(raw)) {
+      try {
+        const parsed = new URL(raw);
+        const pathOnly = parsed.pathname || '';
+        if (pathOnly) return pathOnly;
+      } catch (err) {}
     }
+
+    if (raw.startsWith('/')) return raw;
+    return '/' + raw;
+  }
+
+  function setAvatarWithFallback(imageEl, preferredUrl, uid) {
+    const candidates = [];
+    const normalizedPreferred = normalizeAvatarUrl(preferredUrl);
+    if (normalizedPreferred) candidates.push(normalizedPreferred);
+    if (uid) {
+      const base = '/uploads/' + uid;
+      candidates.push(base + '.png', base + '.webp', base + '.jpg', base + '.jpeg', base + '.gif');
+    }
+
+    const seen = new Set();
+    const uniqueCandidates = candidates.filter(url => {
+      if (!url || seen.has(url)) return false;
+      seen.add(url);
+      return true;
+    });
+
+    let idx = 0;
+    const tryNext = () => {
+      if (idx >= uniqueCandidates.length) {
+        imageEl.onerror = null;
+        imageEl.src = 'default-avatar.png';
+        return;
+      }
+      const nextUrl = uniqueCandidates[idx++];
+      imageEl.onerror = tryNext;
+      imageEl.src = nextUrl;
+    };
+
+    tryNext();
+  }
+
+  const avatarImg = $('profile-avatar'); if (avatarImg) {
+    const stableAvatarUrl = '/avatars/' + encodeURIComponent(userId);
+    setAvatarWithFallback(avatarImg, stableAvatarUrl, userId);
   }
   const quizzes = await api('/api/users/' + userId + '/quizzes');
   const uq = $('user-quizzes'); if (uq) {
@@ -1168,7 +1205,14 @@ async function initProfilePage() {
       if (auth && auth.token) headers.Authorization = 'Bearer ' + auth.token;
       const res = await fetch('/api/users/' + userId + '/avatar', { method: 'POST', headers, body: fd });
       const data = await res.json();
-      if (data.avatar) { const avatarImg2 = $('profile-avatar'); if (avatarImg2) { let url = data.avatar; if (!url.startsWith('/')) url = '/' + url; avatarImg2.src = url; } alert('Uploaded'); }
+      if (data.avatar) {
+        const avatarImg2 = $('profile-avatar');
+        if (avatarImg2) {
+          const stableAvatarUrl = '/avatars/' + encodeURIComponent(userId);
+          avatarImg2.src = stableAvatarUrl + '?v=' + Date.now();
+        }
+        alert('Uploaded');
+      }
     });
   }
 }
