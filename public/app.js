@@ -42,6 +42,101 @@ function renderMarkdown(md) {
   return md;
 }
 
+function escapeHtml(value) {
+  return String(value == null ? '' : value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function decodeCommonEntities(value) {
+  let out = String(value == null ? '' : value);
+  for (let i = 0; i < 8; i++) {
+    const prev = out;
+    out = out
+      .replace(/&amp;/gi, '&')
+      .replace(/&nbsp;/gi, ' ')
+      .replace(/&#0*62;|&#x0*3e;/gi, '>')
+      .replace(/&#0*60;|&#x0*3c;/gi, '<')
+      .replace(/&gt;?/gi, '>')
+      .replace(/&lt;?/gi, '<')
+      .replace(/&ge;|&geq;/gi, '≥')
+      .replace(/&le;|&leq;/gi, '≤')
+      .replace(/&ne;|&neq;/gi, '≠')
+      .replace(/&times;|&#215;/gi, '×');
+    if (out === prev) break;
+  }
+  return out;
+}
+
+function normalizeMathEscapes(value) {
+  let out = String(value == null ? '' : value);
+  for (let i = 0; i < 3; i++) {
+    out = out
+      .replace(/\\\\\(/g, '\\(')
+      .replace(/\\\\\)/g, '\\)')
+      .replace(/\\\\([A-Za-z])/g, '\\$1');
+  }
+  return out;
+}
+
+function renderMathExpression(expr) {
+  const normalizedExpr = normalizeMathEscapes(decodeCommonEntities(expr));
+  let safe = escapeHtml(normalizedExpr).trim();
+  safe = safe.replace(/\\log_\{([^}]+)\}/g, 'log<sub>$1</sub>');
+  safe = safe.replace(/\\log_([A-Za-z0-9.]+)/g, 'log<sub>$1</sub>');
+  safe = safe.replace(/\\log/g, 'log');
+  safe = safe.replace(/\\ln/g, 'ln');
+  safe = safe.replace(/\\neq|\\ne/g, '≠');
+  safe = safe.replace(/\\geq|\\ge/g, '≥');
+  safe = safe.replace(/\\leq|\\le/g, '≤');
+  safe = safe.replace(/\\times/g, '×');
+  safe = safe.replace(/\/times\b/g, '×');
+  return safe;
+}
+
+function renderQuestionText(text) {
+  const normalized = normalizeMathEscapes(decodeCommonEntities(text));
+  let safe = escapeHtml(normalized);
+  safe = safe.replace(/\\+\(([\s\S]*?)\\+\)/g, (_, expr) => `<span class="math-inline">${renderMathExpression(expr)}</span>`);
+  safe = safe.replace(/\\ln/g, 'ln');
+  safe = safe.replace(/\\neq|\\ne/g, '≠');
+  safe = safe.replace(/\\geq|\\ge/g, '≥');
+  safe = safe.replace(/\\leq|\\le/g, '≤');
+  safe = safe.replace(/\\times/g, '×');
+  safe = safe.replace(/\/times\b/g, '×');
+  safe = safe.replace(/\blog_\{([^}]+)\}/g, 'log<sub>$1</sub>');
+  safe = safe.replace(/\blog_([A-Za-z0-9.]+)/g, 'log<sub>$1</sub>');
+  return safe;
+}
+
+function renderInlineMathInHtml(html) {
+  const normalized = normalizeMathEscapes(decodeCommonEntities(html));
+  let safeHtml = String(normalized == null ? '' : normalized);
+  safeHtml = safeHtml.replace(/\\+\(([\s\S]*?)\\+\)/g, (_, expr) => `<span class="math-inline">${renderMathExpression(expr)}</span>`);
+  safeHtml = safeHtml.replace(/\\ln/g, 'ln');
+  safeHtml = safeHtml.replace(/\\times/g, '×');
+  safeHtml = safeHtml.replace(/\/times\b/g, '×');
+  return safeHtml;
+}
+
+function renderPlainMathText(text) {
+  let out = normalizeMathEscapes(decodeCommonEntities(text));
+  out = out.replace(/\\+\(([\s\S]*?)\\+\)/g, '$1');
+  out = out.replace(/\\log_\{([^}]+)\}/g, 'log_$1');
+  out = out.replace(/\\log_([A-Za-z0-9.]+)/g, 'log_$1');
+  out = out.replace(/\\log/g, 'log');
+  out = out.replace(/\\ln/g, 'ln');
+  out = out.replace(/\\neq|\\ne/g, '≠');
+  out = out.replace(/\\geq|\\ge/g, '≥');
+  out = out.replace(/\\leq|\\le/g, '≤');
+  out = out.replace(/\\times/g, '×');
+  out = out.replace(/\/times\b/g, '×');
+  return out;
+}
+
 function renumberQuestionBlocks() {
   const blocks = Array.from(document.querySelectorAll('.question-block'));
   blocks.forEach((block, idx) => {
@@ -701,7 +796,7 @@ function loadQuiz(id) {
       return;
     }
     if (takeTitle) takeTitle.textContent = q.title || 'Untitled Quiz';
-    if (takeDesc) takeDesc.innerHTML = renderMarkdown(q.description);
+    if (takeDesc) takeDesc.innerHTML = renderInlineMathInHtml(renderMarkdown(q.description));
 
     if (downloadBtn) {
       downloadBtn.onclick = () => {
@@ -856,10 +951,12 @@ function loadQuiz(id) {
 
     q.questions.forEach((question, qi) => {
       const qdiv = el('div', { class: 'take-question' });
-      qdiv.appendChild(el('h3', {}, [ question.text ]));
+      const qTitle = el('h3');
+      qTitle.innerHTML = renderQuestionText(question.text || '');
+      qdiv.appendChild(qTitle);
       if (question.description) {
         const d = el('div', { class: 'question-desc' });
-        d.innerHTML = renderMarkdown(question.description);
+        d.innerHTML = renderInlineMathInHtml(renderMarkdown(question.description));
         qdiv.appendChild(d);
       }
       const type = question.type || 'multiple';
@@ -867,7 +964,8 @@ function loadQuiz(id) {
         (question.options || []).forEach((opt, oi) => {
           const id = `q${qi}o${oi}`;
           const radio = el('input', { type: 'radio', name: 'q' + qi, value: oi, id });
-          const label = el('label', { for: id }, [ opt ]);
+          const label = el('label', { for: id });
+          label.innerHTML = renderQuestionText(opt);
           qdiv.appendChild(radio);
           qdiv.appendChild(label);
           qdiv.appendChild(el('br'));
@@ -876,7 +974,8 @@ function loadQuiz(id) {
         (question.options || []).forEach((opt, oi) => {
           const id = `q${qi}o${oi}`;
           const cb = el('input', { type: 'checkbox', name: 'q' + qi, value: oi, id });
-          const label = el('label', { for: id }, [ opt ]);
+          const label = el('label', { for: id });
+          label.innerHTML = renderQuestionText(opt);
           qdiv.appendChild(cb);
           qdiv.appendChild(label);
           qdiv.appendChild(el('br'));
@@ -888,7 +987,7 @@ function loadQuiz(id) {
         const rightOptions = Array.isArray(question.rightOptions)
           ? question.rightOptions
           : (question.pairs || []).map(p => p.right);
-        const rights = rightOptions.slice();
+        const rights = rightOptions.map(item => renderPlainMathText(item));
         // randomize displayed right-side options
         const shuffled = shuffle(rights.slice());
         leftItems.forEach((left) => {
@@ -896,7 +995,9 @@ function loadQuiz(id) {
           // default placeholder option
           sel.appendChild(el('option', { value: '' }, [ '{Choose}' ]));
           shuffled.forEach(r => { const o = el('option', { value: r }, [ r ]); sel.appendChild(o); });
-          const row = el('div', {}, [ el('strong', {}, [ left ]), sel ]);
+          const leftLabel = el('strong');
+          leftLabel.innerHTML = renderQuestionText(left || '');
+          const row = el('div', {}, [ leftLabel, sel ]);
           qdiv.appendChild(row);
         });
       } else if (type === 'text') {
@@ -946,7 +1047,9 @@ function loadQuiz(id) {
           const list = el('ul', { class: 'submission-feedback-list' });
           res.questionResults.forEach(item => {
             const status = item.correct ? '✅ Correct' : '❌ Incorrect';
-            const li = el('li', {}, [ el('strong', {}, [ `Q${(item.index || 0) + 1}: ${status}` ]), el('div', {}, [ item.text || '' ]) ]);
+            const questionText = el('div');
+            questionText.innerHTML = renderQuestionText(item.text || '');
+            const li = el('li', {}, [ el('strong', {}, [ `Q${(item.index || 0) + 1}: ${status}` ]), questionText ]);
             if (!item.correct && item.correctAnswer != null) {
               let answerText = '';
               if (Array.isArray(item.correctAnswer)) {
@@ -960,7 +1063,9 @@ function loadQuiz(id) {
               } else {
                 answerText = String(item.correctAnswer);
               }
-              li.appendChild(el('div', {}, [ `Correct answer: ${answerText}` ]));
+              const answerLine = el('div');
+              answerLine.innerHTML = renderQuestionText(`Correct answer: ${answerText}`);
+              li.appendChild(answerLine);
             }
             list.appendChild(li);
           });
