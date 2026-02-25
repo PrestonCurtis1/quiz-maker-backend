@@ -286,6 +286,45 @@ function getPublicBaseUrl(req) {
   return `${proto}://${host}`;
 }
 
+function escapeXml(value) {
+  return String(value == null ? '' : value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+app.get('/sitemap.xml', async (req, res) => {
+  const baseUrl = getPublicBaseUrl(req);
+  const corePaths = ['/', '/create.html', '/login.html', '/profile.html', '/edit.html'];
+
+  const data = await readData();
+  const quizPaths = data
+    .filter(q => q && q.id)
+    .map(q => '/share/' + encodeURIComponent(q.id));
+  const takeQuizPaths = data
+    .filter(q => q && q.id)
+    .map(q => '/take.html?quiz=' + encodeURIComponent(q.id));
+
+  const users = await readUsers();
+  const profilePaths = users
+    .filter(u => u && u.id)
+    .map(u => '/profile.html?user=' + encodeURIComponent(u.id));
+
+  const allUrls = Array.from(new Set([...corePaths, ...quizPaths, ...takeQuizPaths, ...profilePaths]));
+  const xmlEntries = allUrls
+    .map(pathname => `<url><loc>${escapeXml(baseUrl + pathname)}</loc></url>`)
+    .join('');
+
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>`
+    + `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">`
+    + xmlEntries
+    + `</urlset>`;
+
+  res.type('application/xml').send(xml);
+});
+
 app.get('/share/:id', async (req, res) => {
   const data = await readData();
   const quiz = data.find(item => item.id === req.params.id);
