@@ -427,6 +427,7 @@ app.get('/share/:id', async (req, res) => {
 app.get('/api/quizzes', async (req, res) => {
   const data = await readData();
   const ratings = await readRatings();
+  const results = await readResults();
   const q = req.query.search ? req.query.search.toLowerCase() : null;
   const list = data.filter(item => {
     if (!q) return true;
@@ -435,8 +436,19 @@ app.get('/api/quizzes', async (req, res) => {
     return inTitle || inDesc;
   }).map(item => {
     const itemRatings = ratings.filter(r => r.quizId === item.id);
+    const itemResults = results.filter(r => r.quizId === item.id);
     const avg = itemRatings.length ? Math.round(itemRatings.reduce((s, r) => s + r.rating, 0) / itemRatings.length * 10) / 10 : null;
-    return { id: item.id, title: item.title, owner: item.owner || null, description: item.description || '', averageRating: avg };
+    const avgScore = itemResults.length
+      ? Math.round(itemResults.reduce((s, r) => s + (Number(r.score) || 0), 0) / itemResults.length)
+      : null;
+    return {
+      id: item.id,
+      title: item.title,
+      owner: item.owner || null,
+      description: item.description || '',
+      averageRating: avg,
+      averageScore: avgScore
+    };
   });
   res.json(list);
 });
@@ -447,9 +459,18 @@ app.get('/api/quizzes/:id', async (req, res) => {
   if (!q) return res.status(404).json({ error: 'Not found' });
   // include ratings summary
   const ratings = await readRatings();
+  const results = await readResults();
   const itemRatings = ratings.filter(r => r.quizId === q.id);
+  const itemResults = results.filter(r => r.quizId === q.id);
   const avg = itemRatings.length ? Math.round(itemRatings.reduce((s, r) => s + r.rating, 0) / itemRatings.length * 10) / 10 : null;
-  res.json(Object.assign({}, sanitizeQuizForPublic(q), { averageRating: avg, ratingsCount: itemRatings.length }));
+  const avgScore = itemResults.length
+    ? Math.round(itemResults.reduce((s, r) => s + (Number(r.score) || 0), 0) / itemResults.length)
+    : null;
+  res.json(Object.assign({}, sanitizeQuizForPublic(q), {
+    averageRating: avg,
+    ratingsCount: itemRatings.length,
+    averageScore: avgScore
+  }));
 });
 
 app.get('/api/quizzes/:id/edit', async (req, res) => {

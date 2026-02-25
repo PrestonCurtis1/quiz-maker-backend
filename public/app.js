@@ -593,6 +593,8 @@ async function refreshQuizList() {
       const edit = el('button', { type: 'button', onclick: () => { window.location.href = '/edit.html?edit=' + encodeURIComponent(q.id); } }, [ 'Edit' ]);
       li.appendChild(edit);
     }
+    const avgScoreText = q.averageScore == null ? 'N/A' : `${q.averageScore}%`;
+    li.appendChild(el('span', { class: 'owner' }, [ ` Average score: ${avgScoreText}` ]));
     ul.appendChild(li);
   });
 }
@@ -774,6 +776,7 @@ function loadQuiz(id) {
     const takeSection = $('take-section'); if (takeSection) takeSection.classList.remove('hidden');
     const takeTitle = $('take-title');
     const takeAuthor = $('take-author');
+    const takeAverageScore = $('take-average-score');
     const takeDesc = $('take-desc');
     const form = $('take-form');
     const feedbackHost = $('submission-feedback');
@@ -786,6 +789,7 @@ function loadQuiz(id) {
     if (!form) return;
     form.innerHTML = '';
     if (feedbackHost) feedbackHost.innerHTML = '';
+    if (takeAverageScore) takeAverageScore.textContent = '';
     if (authorResultsPanel) authorResultsPanel.classList.add('hidden');
     if (authorResultsList) authorResultsList.innerHTML = '';
     if (authorResultDetail) authorResultDetail.innerHTML = '';
@@ -802,6 +806,10 @@ function loadQuiz(id) {
       return;
     }
     if (takeTitle) takeTitle.textContent = q.title || 'Untitled Quiz';
+    if (takeAverageScore) {
+      const avgScoreText = q.averageScore == null ? 'N/A' : `${q.averageScore}%`;
+      takeAverageScore.textContent = `Average score: ${avgScoreText}`;
+    }
     if (takeDesc) takeDesc.innerHTML = renderInlineMathInHtml(renderMarkdown(q.description));
 
     if (downloadBtn) {
