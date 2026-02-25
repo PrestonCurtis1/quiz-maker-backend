@@ -578,6 +578,8 @@ function applyQuizToEditor(quiz) {
   const difficulty = $('quiz-difficulty');
   const showResults = $('show-question-results');
   const showAnswers = $('show-correct-answers');
+  const partialCreditEnabled = $('partial-credit-enabled');
+  const requireLogin = $('require-login');
   const questionsContainer = $('questions');
   if (!questionsContainer) return;
 
@@ -591,6 +593,8 @@ function applyQuizToEditor(quiz) {
     ? quiz.tags.map(tag => String(tag || '').trim()).filter(Boolean)
     : [];
   renderEditorTags(list);
+  if (partialCreditEnabled) partialCreditEnabled.checked = quiz.partialCreditEnabled !== false;
+  if (requireLogin) requireLogin.checked = !!quiz.requireLogin;
   if (showResults) showResults.checked = !!quiz.showQuestionResults;
   if (showAnswers) showAnswers.checked = !!quiz.showCorrectAnswersForIncorrect;
 
@@ -622,6 +626,8 @@ function normalizeImportedQuiz(quiz) {
     description: base.description || '',
     difficulty: ['easy', 'medium', 'hard'].includes(normalizedDifficulty) ? normalizedDifficulty : 'medium',
     tags: normalizedTags,
+    partialCreditEnabled: base.partialCreditEnabled !== false,
+    requireLogin: !!base.requireLogin,
     showQuestionResults: !!base.showQuestionResults,
     showCorrectAnswersForIncorrect: !!base.showCorrectAnswersForIncorrect,
     questions: Array.isArray(base.questions) ? base.questions : []
@@ -915,6 +921,8 @@ async function editQuiz(id) {
   }
   const tagsList = Array.isArray(q.tags) ? q.tags.map(tag => String(tag || '').trim()).filter(Boolean) : [];
   renderEditorTags(tagsList);
+  const partialCreditEl = $('partial-credit-enabled'); if (partialCreditEl) partialCreditEl.checked = q.partialCreditEnabled !== false;
+  const requireLoginEl = $('require-login'); if (requireLoginEl) requireLoginEl.checked = !!q.requireLogin;
   const showQuestionResultsEl = $('show-question-results'); if (showQuestionResultsEl) showQuestionResultsEl.checked = !!q.showQuestionResults;
   const showCorrectAnswersEl = $('show-correct-answers'); if (showCorrectAnswersEl) showCorrectAnswersEl.checked = !!q.showCorrectAnswersForIncorrect;
   const container = $('questions');
@@ -933,6 +941,8 @@ function loadQuiz(id) {
     const takeAuthor = $('take-author');
     const takeDifficulty = $('take-difficulty');
     const takeTags = $('take-tags');
+    const takePartialCredit = $('take-partial-credit');
+    const takeRequireLogin = $('take-require-login');
     const takeAverageScore = $('take-average-score');
     const takeQuizScore = $('take-quiz-score');
     const takeDesc = $('take-desc');
@@ -949,6 +959,8 @@ function loadQuiz(id) {
     if (feedbackHost) feedbackHost.innerHTML = '';
     if (takeDifficulty) takeDifficulty.textContent = '';
     if (takeTags) takeTags.textContent = '';
+    if (takePartialCredit) takePartialCredit.textContent = '';
+    if (takeRequireLogin) takeRequireLogin.textContent = '';
     if (takeAverageScore) takeAverageScore.textContent = '';
     if (takeQuizScore) takeQuizScore.textContent = '';
     if (authorResultsPanel) authorResultsPanel.classList.add('hidden');
@@ -974,6 +986,16 @@ function loadQuiz(id) {
     if (takeTags) {
       const tagsList = Array.isArray(q.tags) ? q.tags.map(tag => String(tag || '').trim()).filter(Boolean) : [];
       takeTags.textContent = `Tags: ${tagsList.length ? tagsList.join(', ') : 'None'}`;
+    }
+    if (takePartialCredit) {
+      takePartialCredit.textContent = `Partial credit: ${q.partialCreditEnabled !== false ? 'Enabled' : 'Disabled'}`;
+    }
+    if (takeRequireLogin) {
+      takeRequireLogin.textContent = `Require login: ${q.requireLogin ? 'Enabled' : 'Disabled'}`;
+    }
+    const pageUser = getCurrentUser();
+    if (q.requireLogin && !pageUser) {
+      alert('You must login to submit this quiz.');
     }
     if (takeAverageScore) {
       const avgScoreText = q.averageScore == null ? 'N/A' : `${q.averageScore}%`;
@@ -1523,6 +1545,10 @@ function loadQuiz(id) {
         }
       });
       const user = getCurrentUser();
+      if (q.requireLogin && !user) {
+        alert('You must login to submit this quiz.');
+        return;
+      }
       const res = await api('/api/quizzes/' + id + '/submit', { method: 'POST', body: JSON.stringify({ answers }) });
       const resultEl = $('result'); if (resultEl) resultEl.textContent = `Score: ${res.score}% (${res.correct}/${res.total})`;
       const feedbackHostAfterSubmit = $('submission-feedback');
@@ -1605,6 +1631,8 @@ const saveQuizBtn = $('save-quiz'); if (saveQuizBtn) saveQuizBtn.addEventListene
   const difficulty = ['easy', 'medium', 'hard'].includes(String(difficultyRaw || '').toLowerCase())
     ? String(difficultyRaw).toLowerCase()
     : 'medium';
+  const partialCreditEnabled = $('partial-credit-enabled') ? $('partial-credit-enabled').checked : true;
+  const requireLogin = $('require-login') ? $('require-login').checked : false;
   const showQuestionResults = $('show-question-results') ? $('show-question-results').checked : false;
   const showCorrectAnswersForIncorrect = $('show-correct-answers') ? $('show-correct-answers').checked : false;
   const blocks = Array.from(document.querySelectorAll('.question-block'));
@@ -1628,7 +1656,7 @@ const saveQuizBtn = $('save-quiz'); if (saveQuizBtn) saveQuizBtn.addEventListene
   saveQuizBtn.textContent = editingId ? 'Updating...' : 'Saving...';
   let nextButtonText = 'Save Quiz';
   if (editingId) {
-    const res = await api('/api/quizzes/' + editingId, { method: 'PUT', body: JSON.stringify({ title, questions, description: desc, difficulty, tags, showQuestionResults, showCorrectAnswersForIncorrect }) });
+    const res = await api('/api/quizzes/' + editingId, { method: 'PUT', body: JSON.stringify({ title, questions, description: desc, difficulty, tags, partialCreditEnabled, requireLogin, showQuestionResults, showCorrectAnswersForIncorrect }) });
     if (res && res.error) {
       alert(res.error);
       saveQuizBtn.disabled = false;
@@ -1639,7 +1667,7 @@ const saveQuizBtn = $('save-quiz'); if (saveQuizBtn) saveQuizBtn.addEventListene
     const ei = $('edit-indicator'); if (ei) ei.classList.add('hidden');
     nextButtonText = 'Save Quiz';
   } else {
-    const res = await api('/api/quizzes', { method: 'POST', body: JSON.stringify({ title, questions, description: desc, difficulty, tags, showQuestionResults, showCorrectAnswersForIncorrect }) });
+    const res = await api('/api/quizzes', { method: 'POST', body: JSON.stringify({ title, questions, description: desc, difficulty, tags, partialCreditEnabled, requireLogin, showQuestionResults, showCorrectAnswersForIncorrect }) });
     if (res && res.error) {
       alert(res.error);
       saveQuizBtn.disabled = false;
@@ -1651,6 +1679,8 @@ const saveQuizBtn = $('save-quiz'); if (saveQuizBtn) saveQuizBtn.addEventListene
   if ($('quiz-difficulty')) $('quiz-difficulty').value = 'medium';
   renderEditorTags([]);
   if ($('quiz-tag-input')) $('quiz-tag-input').value = '';
+  if ($('partial-credit-enabled')) $('partial-credit-enabled').checked = true;
+  if ($('require-login')) $('require-login').checked = false;
   if ($('show-question-results')) $('show-question-results').checked = false;
   if ($('show-correct-answers')) $('show-correct-answers').checked = false;
   document.getElementById('questions').innerHTML = '';

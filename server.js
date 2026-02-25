@@ -510,7 +510,7 @@ app.get('/api/quizzes/:id/edit', async (req, res) => {
 app.post('/api/quizzes', async (req, res) => {
   const authUser = getAuthUser(req);
   if (!authUser) return res.status(401).json({ error: 'Unauthorized' });
-  const { title, questions, description, difficulty, tags, showQuestionResults, showCorrectAnswersForIncorrect } = req.body;
+  const { title, questions, description, difficulty, tags, partialCreditEnabled, requireLogin, showQuestionResults, showCorrectAnswersForIncorrect } = req.body;
   if (!title || !Array.isArray(questions)) return res.status(400).json({ error: 'Invalid payload' });
   const normalizedDifficulty = ['easy', 'medium', 'hard'].includes(String(difficulty || '').toLowerCase())
     ? String(difficulty).toLowerCase()
@@ -530,6 +530,8 @@ app.post('/api/quizzes', async (req, res) => {
     description: description || '',
     difficulty: normalizedDifficulty,
     tags: normalizedTags,
+    partialCreditEnabled: partialCreditEnabled !== false,
+    requireLogin: !!requireLogin,
     showQuestionResults: !!showQuestionResults,
     showCorrectAnswersForIncorrect: !!showCorrectAnswersForIncorrect
   };
@@ -541,7 +543,7 @@ app.post('/api/quizzes', async (req, res) => {
 app.put('/api/quizzes/:id', async (req, res) => {
   const authUser = getAuthUser(req);
   if (!authUser) return res.status(401).json({ error: 'Unauthorized' });
-  const { title, questions, description, difficulty, tags, showQuestionResults, showCorrectAnswersForIncorrect } = req.body;
+  const { title, questions, description, difficulty, tags, partialCreditEnabled, requireLogin, showQuestionResults, showCorrectAnswersForIncorrect } = req.body;
   if (!title || !Array.isArray(questions)) return res.status(400).json({ error: 'Invalid payload' });
   const normalizedDifficulty = ['easy', 'medium', 'hard'].includes(String(difficulty || '').toLowerCase())
     ? String(difficulty).toLowerCase()
@@ -562,6 +564,8 @@ app.put('/api/quizzes/:id', async (req, res) => {
   data[idx].description = description || data[idx].description || '';
   data[idx].difficulty = normalizedDifficulty;
   data[idx].tags = normalizedTags;
+  data[idx].partialCreditEnabled = partialCreditEnabled !== false;
+  data[idx].requireLogin = !!requireLogin;
   data[idx].showQuestionResults = !!showQuestionResults;
   data[idx].showCorrectAnswersForIncorrect = !!showCorrectAnswersForIncorrect;
   await writeData(data);
@@ -727,6 +731,8 @@ app.post('/api/quizzes/:id/submit', async (req, res) => {
   const data = await readData();
   const q = data.find(item => item.id === req.params.id);
   if (!q) return res.status(404).json({ error: 'Not found' });
+  if (q.requireLogin && !authUser) return res.status(401).json({ error: 'Login required for this quiz' });
+  const partialCreditEnabled = q.partialCreditEnabled !== false;
 
   function toIntegerOrNull(value) {
     const parsed = parseInt(value, 10);
@@ -771,7 +777,11 @@ app.post('/api/quizzes/:id/submit', async (req, res) => {
         }
       }
       const totalOptions = options.length || 1;
-      fraction = correct / totalOptions;
+      if (partialCreditEnabled) {
+        fraction = correct / totalOptions;
+      } else {
+        fraction = (correct === options.length) ? 1 : 0;
+      }
       totalFraction += fraction;
     } else if (type === 'matching') {
       const pairs = Array.isArray(question.pairs) ? question.pairs : [];
@@ -779,7 +789,11 @@ app.post('/api/quizzes/:id/submit', async (req, res) => {
       if (pairs.length === 0) { return; }
       let matched = 0;
       pairs.forEach((p, i) => { if (userPairs[i] === p.right) matched++; });
-      fraction = (matched / pairs.length);
+      if (partialCreditEnabled) {
+        fraction = (matched / pairs.length);
+      } else {
+        fraction = matched === pairs.length ? 1 : 0;
+      }
       totalFraction += fraction;
     } else if (type === 'text' || type === 'fill') {
       if (!question.answer) return;

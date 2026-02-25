@@ -49,6 +49,8 @@
       </div>
       <textarea id="quiz-description" placeholder="Quiz description (markdown)" rows="4"></textarea>
       <div class="editor-help">Use one card per question. You can reorder, duplicate, and remove questions. Enter options, then click the correct answer(s).</div>
+      <label class="editor-option"><input id="partial-credit-enabled" type="checkbox" checked /> Enable partial credit scoring</label>
+      <label class="editor-option"><input id="require-login" type="checkbox" /> Require login to submit this quiz</label>
       <label class="editor-option"><input id="show-question-results" type="checkbox" /> Show which questions were correct/incorrect after submit</label>
       <label class="editor-option"><input id="show-correct-answers" type="checkbox" /> Show correct answers for incorrect questions</label>
       <div id="questions"></div>
@@ -59,6 +61,6 @@
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
   <script src="ai.js?v=20260224e"></script>
-  <script src="app.js?v=20260225j"></script>
+  <script src="app.js?v=20260225k"></script>
 </body>
 </html>
