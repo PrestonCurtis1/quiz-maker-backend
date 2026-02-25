@@ -5,3 +5,7 @@ add a score for each Quiz calculated by formula Score = (Rating * 2) + (average_
 Add sort by function with rating, average quiz score, submissions, score(default)
 Add order by low-high high-low
 Add filters User, Difficulty, Tags
+add partial credit settings option to quiz creation default true
+add require login option to quizzes default false
+add password reset feature
+add discord webhooks for. quiz created. quiz updated. quiz submissionm, quiz rating.
