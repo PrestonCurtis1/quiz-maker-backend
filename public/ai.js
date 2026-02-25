@@ -488,7 +488,7 @@
       if (existing) existing.remove();
 
       const defaultCount = Number.isFinite(defaults.defaultQuestionCount)
-        ? clampNumber(defaults.defaultQuestionCount, 3, 20, 8)
+        ? clampNumber(defaults.defaultQuestionCount, 3, 50, 8)
         : 8;
       const defaultDifficulty = normalizeDifficulty(defaults.defaultDifficulty || 'medium');
       const openAiConfigured = (defaults.aiProvider || 'local') === 'openai' && !!normalizeSpaces(defaults.openaiApiKey || '');
@@ -520,11 +520,11 @@
 
       const countWrap = document.createElement('div');
       const countLabel = document.createElement('label');
-      countLabel.textContent = 'Question count (3-20)';
+      countLabel.textContent = 'Question count (3-50)';
       const countInput = document.createElement('input');
       countInput.type = 'number';
       countInput.min = '3';
-      countInput.max = '20';
+      countInput.max = '50';
       countInput.value = String(defaultCount);
       countWrap.appendChild(countLabel);
       countWrap.appendChild(countInput);
@@ -683,7 +683,7 @@
 
         close({
           topic: normalizedTopic,
-          questionCount: clampNumber(countInput.value, 3, 20, 8),
+          questionCount: clampNumber(countInput.value, 3, 50, 8),
           requestedType,
           difficulty: normalizeDifficulty(difficultySelect.value),
           focus: normalizedFocus,
@@ -1007,42 +1007,177 @@
     return true;
   }
 
-  function reviewQuizWithPrompts(quiz) {
+  function askReviewQuestionOverlay(question, index, total) {
+    return new Promise(resolve => {
+      const existing = byId('ai-review-overlay');
+      if (existing) existing.remove();
+
+      const q = question || {};
+      const type = q.type || 'multiple';
+      const overlay = document.createElement('div');
+      overlay.id = 'ai-review-overlay';
+      overlay.className = 'ai-draft-overlay';
+
+      const modal = document.createElement('div');
+      modal.className = 'ai-draft-modal';
+      modal.setAttribute('role', 'dialog');
+      modal.setAttribute('aria-modal', 'true');
+
+      const title = document.createElement('h3');
+      title.textContent = `Review Question ${index + 1}/${total} (${type})`;
+
+      const form = document.createElement('form');
+      form.className = 'ai-draft-form';
+
+      const textLabel = document.createElement('label');
+      textLabel.textContent = 'Question text';
+      const textInput = document.createElement('textarea');
+      textInput.rows = 3;
+      textInput.value = q.text || '';
+
+      const descLabel = document.createElement('label');
+      descLabel.textContent = 'Description (optional)';
+      const descInput = document.createElement('textarea');
+      descInput.rows = 3;
+      descInput.value = q.description || '';
+
+      const optionsLabel = document.createElement('label');
+      optionsLabel.textContent = 'Options (one per line)';
+      const optionsInput = document.createElement('textarea');
+      optionsInput.rows = 5;
+      const hasOptions = type === 'multiple' || type === 'multi';
+      const initialOptions = Array.isArray(q.options) ? q.options : [];
+      optionsInput.value = initialOptions.join('\n');
+
+      const answerLabel = document.createElement('label');
+      let answerHelp = 'Enter updated answers.';
+      let answerValue = '';
+
+      if (type === 'multiple') {
+        answerLabel.textContent = 'Correct option number';
+        answerHelp = 'Use 1-based index (example: 2).';
+        answerValue = Number.isInteger(q.correct) ? String(q.correct + 1) : '1';
+      } else if (type === 'multi') {
+        answerLabel.textContent = 'Correct option numbers';
+        answerHelp = 'Comma-separated 1-based indexes (example: 1,3).';
+        const arr = Array.isArray(q.correct) ? q.correct : [];
+        answerValue = arr.map(n => Number.isInteger(n) ? String(n + 1) : '').filter(Boolean).join(',');
+      } else if (type === 'matching') {
+        answerLabel.textContent = 'Matching pairs';
+        answerHelp = 'Format: left -> right; left2 -> right2';
+        const pairs = Array.isArray(q.pairs) ? q.pairs : [];
+        answerValue = pairs.map(p => `${p.left || ''} -> ${p.right || ''}`).join('; ');
+      } else if (type === 'number') {
+        answerLabel.textContent = 'Accepted number(s)';
+        answerHelp = 'Comma-separated numeric values (example: 12, 12.5).';
+        const arr = Array.isArray(q.answer) ? q.answer : [q.answer];
+        answerValue = arr.filter(v => v != null && v !== '').join(',');
+      } else {
+        answerLabel.textContent = 'Accepted answer(s)';
+        answerHelp = 'Comma-separated values.';
+        const arr = Array.isArray(q.answer) ? q.answer : [q.answer];
+        answerValue = arr.filter(Boolean).join(',');
+      }
+
+      const answerInput = document.createElement(type === 'matching' ? 'textarea' : 'input');
+      if (answerInput.tagName === 'TEXTAREA') {
+        answerInput.rows = 4;
+      } else {
+        answerInput.type = 'text';
+      }
+      answerInput.value = answerValue;
+
+      const help = document.createElement('div');
+      help.className = 'q-help';
+      help.textContent = answerHelp;
+
+      const actions = document.createElement('div');
+      actions.className = 'ai-draft-actions';
+      const cancelBtn = document.createElement('button');
+      cancelBtn.type = 'button';
+      cancelBtn.textContent = 'Keep & Next';
+      const saveBtn = document.createElement('button');
+      saveBtn.type = 'submit';
+      saveBtn.textContent = (index + 1 === total) ? 'Save Review' : 'Save & Next';
+      actions.appendChild(cancelBtn);
+      actions.appendChild(saveBtn);
+
+      form.appendChild(textLabel);
+      form.appendChild(textInput);
+      form.appendChild(descLabel);
+      form.appendChild(descInput);
+      if (hasOptions) {
+        form.appendChild(optionsLabel);
+        form.appendChild(optionsInput);
+      }
+      form.appendChild(answerLabel);
+      form.appendChild(answerInput);
+      form.appendChild(help);
+      form.appendChild(actions);
+
+      modal.appendChild(title);
+      modal.appendChild(form);
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+
+      let done = false;
+      function close(result) {
+        if (done) return;
+        done = true;
+        document.removeEventListener('keydown', onKeyDown);
+        overlay.remove();
+        resolve(result);
+      }
+
+      function onKeyDown(event) {
+        if (event.key === 'Escape') close(null);
+      }
+
+      document.addEventListener('keydown', onKeyDown);
+      cancelBtn.addEventListener('click', () => close(null));
+      overlay.addEventListener('click', event => {
+        if (event.target === overlay) close(null);
+      });
+
+      form.addEventListener('submit', event => {
+        event.preventDefault();
+        const edited = Object.assign({}, q);
+        const nextText = normalizeSpaces(textInput.value || '');
+        if (nextText) edited.text = nextText;
+        edited.description = normalizeSpaces(descInput.value || '');
+
+        if (hasOptions) {
+          const nextOptions = (optionsInput.value || '')
+            .split('\n')
+            .map(v => normalizeSpaces(v))
+            .filter(Boolean);
+
+          if (nextOptions.length >= 2) {
+            edited.options = uniqueStrings(nextOptions, 20);
+          } else if (initialOptions.length >= 2) {
+            edited.options = initialOptions.slice();
+            window.alert('At least 2 options are required. Keeping previous options.');
+          }
+        }
+
+        const answerUpdated = tryUpdateAnswersFromPrompt(edited, answerInput.value || '');
+        if (!answerUpdated) {
+          window.alert('Could not parse answers. Keeping previous answer(s).');
+        }
+        close(edited);
+      });
+
+      setTimeout(() => textInput.focus(), 0);
+    });
+  }
+
+  async function reviewQuizWithPrompts(quiz) {
     if (!quiz || !Array.isArray(quiz.questions)) return quiz;
 
     for (let i = 0; i < quiz.questions.length; i++) {
       const q = quiz.questions[i];
-      const header = `Question ${i + 1}/${quiz.questions.length} (${q.type || 'multiple'})`;
-      const questionPreview = `${header}\n\n${q.text || ''}${q.description ? `\n\nDescription: ${q.description}` : ''}`;
-      const questionOk = window.confirm(`${questionPreview}\n\nIs this question OK?`);
-
-      if (!questionOk) {
-        const editedText = window.prompt('Edit question text:', q.text || '');
-        if (editedText !== null && normalizeSpaces(editedText)) q.text = normalizeSpaces(editedText);
-        if (q.description != null) {
-          const editedDesc = window.prompt('Edit description (optional):', q.description || '');
-          if (editedDesc !== null) q.description = normalizeSpaces(editedDesc);
-        }
-      }
-
-      const answerSummary = formatCorrectAnswerSummary(q);
-      const answersOk = window.confirm(`${header}\n\n${answerSummary}\n\nAre the answer(s) OK?`);
-      if (!answersOk) {
-        let instructions = 'Enter updated answers:';
-        if (q.type === 'multiple') instructions = 'Enter the correct option number (e.g., 2):';
-        else if (q.type === 'multi') instructions = 'Enter correct option numbers separated by commas (e.g., 1,3):';
-        else if (q.type === 'matching') instructions = 'Enter pairs using format left -> right; left2 -> right2';
-        else if (q.type === 'number') instructions = 'Enter accepted number(s) separated by commas (e.g., 12, 12.5):';
-        else instructions = 'Enter accepted answers separated by commas:';
-
-        const editedAnswers = window.prompt(instructions, '');
-        if (editedAnswers !== null) {
-          const updated = tryUpdateAnswersFromPrompt(q, editedAnswers);
-          if (!updated) {
-            window.alert('Could not parse that input, keeping previous answer(s).');
-          }
-        }
-      }
+      const edited = await askReviewQuestionOverlay(q, i, quiz.questions.length);
+      if (edited) quiz.questions[i] = edited;
     }
 
     return quiz;
@@ -1065,7 +1200,7 @@
     const units = extractPromptUnits(prompt, effectiveRules.topic);
     const topic = normalizeSpaces(overrides.topic || units.topic || effectiveRules.topic);
     const questionCount = Number.isFinite(overrides.questionCount)
-      ? clampNumber(overrides.questionCount, 3, 20, 8)
+      ? clampNumber(overrides.questionCount, 3, 50, 8)
       : extractQuestionCount(prompt);
     const facets = units.facets.length ? units.facets : extractPromptFacets(prompt);
     const difficulty = normalizeDifficulty(overrides.difficulty || inferDifficulty(prompt));
@@ -1567,13 +1702,132 @@
     return `Create a quiz as strict JSON only.\nTopic: ${config.topic}\nQuestion count: ${config.questionCount}\nRequested type: ${typeLabel}\nDifficulty: ${config.difficulty}\nFocus: ${config.focus || 'none'}\nInclude math/equations: ${config.includeMath ? 'yes' : 'no'}\nPrompt summary: ${prompt}\n${domainGuidance}\nCorrectness rules: (1) Every question must have factually consistent answer key. (2) For multiple, correct must point to exactly one true option. (3) For multi, correct must include all and only true options. (4) Do not output placeholder answers like "topic basics". (5) Ensure options are semantically distinct and not contradictory.`;
   }
 
-  function buildOpenAiPromptFromStudyText(fileName, studyText) {
+  function buildOpenAiPromptFromStudyText(fileName, studyText, options = {}) {
+    const questionCount = clampNumber(options.questionCount, 3, 50, 8);
+    const difficulty = normalizeDifficulty(options.difficulty || 'medium');
+    const generalPrompt = normalizeSpaces(options.generalPrompt || '');
     const clipped = (studyText || '').slice(0, 14000);
-    return `Create a quiz as strict JSON only from this study guide text.\nFile name: ${fileName}\nUse 6 to 12 questions depending on content coverage.\nMix question types naturally: multiple, multi, matching, text, and number when appropriate.\nCorrectness rules: keep answer keys strictly consistent with the source text; if source lacks a specific fact, ask a conceptual question supported by the source instead of guessing.\nStudy text:\n${clipped}`;
+    const promptHint = generalPrompt ? `\nAdditional instructions: ${generalPrompt}` : '';
+    return `Create a quiz as strict JSON only from this study guide text.\nFile name: ${fileName}\nQuestion count: ${questionCount}\nDifficulty: ${difficulty}\nUse approximately ${questionCount} questions while maintaining source coverage.\nMix question types naturally: multiple, multi, matching, text, and number when appropriate.\nCorrectness rules: keep answer keys strictly consistent with the source text; if source lacks a specific fact, ask a conceptual question supported by the source instead of guessing.${promptHint}\nStudy text:\n${clipped}`;
   }
 
   function openAiSystemPrompt() {
     return 'You generate educational quizzes and must output ONLY valid JSON with shape: {"title":string,"description":string,"questions":[{"type":"multiple|multi|matching|text|number","text":string,"description":string,"options"?:string[],"correct"?:number|number[],"answer"?:string|string[]|number|number[],"pairs"?:[{"left":string,"right":string}]}]}. For multiple/multi include at least 4 options. For matching include at least 3 pairs. No markdown fences. Prioritize factual correctness over creativity. Never fabricate specific lore/trivia when uncertain; instead produce conceptual or mechanics-focused questions that remain correct. Verify each correct index maps to the intended option text before returning JSON.';
+  }
+
+  function askPdfQuizConfig(defaults = {}) {
+    return new Promise(resolve => {
+      const existing = byId('ai-pdf-overlay');
+      if (existing) existing.remove();
+
+      const defaultCount = Number.isFinite(defaults.defaultQuestionCount)
+        ? clampNumber(defaults.defaultQuestionCount, 3, 50, 8)
+        : 8;
+      const defaultDifficulty = normalizeDifficulty(defaults.defaultDifficulty || 'medium');
+
+      const overlay = document.createElement('div');
+      overlay.id = 'ai-pdf-overlay';
+      overlay.className = 'ai-draft-overlay';
+
+      const modal = document.createElement('div');
+      modal.className = 'ai-draft-modal';
+      modal.setAttribute('role', 'dialog');
+      modal.setAttribute('aria-modal', 'true');
+
+      const title = document.createElement('h3');
+      title.textContent = 'Generate Quiz From PDF';
+
+      const form = document.createElement('form');
+      form.className = 'ai-draft-form';
+
+      const row = document.createElement('div');
+      row.className = 'ai-draft-row';
+
+      const countWrap = document.createElement('div');
+      const countLabel = document.createElement('label');
+      countLabel.textContent = 'Question count (3-50)';
+      const countInput = document.createElement('input');
+      countInput.type = 'number';
+      countInput.min = '3';
+      countInput.max = '50';
+      countInput.value = String(defaultCount);
+      countWrap.appendChild(countLabel);
+      countWrap.appendChild(countInput);
+
+      const difficultyWrap = document.createElement('div');
+      const difficultyLabel = document.createElement('label');
+      difficultyLabel.textContent = 'Difficulty';
+      const difficultySelect = document.createElement('select');
+      ['easy', 'medium', 'hard'].forEach(level => {
+        const opt = document.createElement('option');
+        opt.value = level;
+        opt.textContent = level;
+        difficultySelect.appendChild(opt);
+      });
+      difficultySelect.value = defaultDifficulty;
+      difficultyWrap.appendChild(difficultyLabel);
+      difficultyWrap.appendChild(difficultySelect);
+
+      row.appendChild(countWrap);
+      row.appendChild(difficultyWrap);
+
+      const generalPromptLabel = document.createElement('label');
+      generalPromptLabel.textContent = 'General prompt (optional)';
+      const generalPromptInput = document.createElement('textarea');
+      generalPromptInput.rows = 4;
+      generalPromptInput.placeholder = 'Add instructions for style, coverage, tone, or constraints.';
+
+      const actions = document.createElement('div');
+      actions.className = 'ai-draft-actions';
+      const cancelBtn = document.createElement('button');
+      cancelBtn.type = 'button';
+      cancelBtn.textContent = 'Cancel';
+      const generateBtn = document.createElement('button');
+      generateBtn.type = 'submit';
+      generateBtn.textContent = 'Generate From PDF';
+      actions.appendChild(cancelBtn);
+      actions.appendChild(generateBtn);
+
+      form.appendChild(row);
+      form.appendChild(generalPromptLabel);
+      form.appendChild(generalPromptInput);
+      form.appendChild(actions);
+
+      modal.appendChild(title);
+      modal.appendChild(form);
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+
+      let done = false;
+      function close(result) {
+        if (done) return;
+        done = true;
+        document.removeEventListener('keydown', onKeyDown);
+        overlay.remove();
+        resolve(result);
+      }
+
+      function onKeyDown(event) {
+        if (event.key === 'Escape') close(null);
+      }
+
+      document.addEventListener('keydown', onKeyDown);
+      overlay.addEventListener('click', event => {
+        if (event.target === overlay) close(null);
+      });
+
+      cancelBtn.addEventListener('click', () => close(null));
+      form.addEventListener('submit', event => {
+        event.preventDefault();
+        close({
+          questionCount: clampNumber(countInput.value, 3, 50, 8),
+          difficulty: normalizeDifficulty(difficultySelect.value),
+          generalPrompt: normalizeSpaces(generalPromptInput.value || '')
+        });
+      });
+
+      setTimeout(() => countInput.focus(), 0);
+    });
   }
 
   function initAiQuizGenerator(applyQuizToEditor, options = {}) {
@@ -1630,7 +1884,7 @@
           quiz = buildLocalQuizFromPrompt(prompt, config);
         }
 
-        const finalQuiz = reviewEnabled ? reviewQuizWithPrompts(quiz) : quiz;
+        const finalQuiz = reviewEnabled ? await reviewQuizWithPrompts(quiz) : quiz;
         applyQuizToEditor(finalQuiz);
         statusEl.textContent = useOpenAi
           ? `Generated ${quiz.questions.length} question(s) with OpenAI. Review and save when ready.`
@@ -1659,12 +1913,25 @@
 
         const settings = readRuntimeAiSettings(options);
         const useOpenAi = (settings.aiProvider || 'local') === 'openai';
+        const hasOpenAiKey = !!normalizeSpaces(settings.openaiApiKey || '');
+        if (!useOpenAi || !hasOpenAiKey) {
+          const msg = 'Generate from PDF requires OpenAI. Set provider to OpenAI and add an API key in Profile settings.';
+          statusEl.textContent = msg;
+          alert(msg);
+          return;
+        }
+
+        const pdfConfig = await askPdfQuizConfig(settings);
+        if (!pdfConfig) {
+          statusEl.textContent = 'PDF generation canceled.';
+          return;
+        }
         const reviewEnabled = shouldReviewGeneratedQuestions(settings);
 
         pdfButtonEl.disabled = true;
         const originalPdfBtnText = pdfButtonEl.textContent;
         pdfButtonEl.textContent = 'Reading PDF...';
-        statusEl.textContent = useOpenAi ? 'Extracting text from PDF for OpenAI...' : 'Extracting text from PDF...';
+        statusEl.textContent = 'Extracting text from PDF for OpenAI...';
 
         try {
           const studyText = await extractTextFromPdfFile(file);
@@ -1672,38 +1939,27 @@
             throw new Error('Could not read enough text from this PDF.');
           }
 
-          let quiz;
-          if (useOpenAi) {
-            if (!normalizeSpaces(settings.openaiApiKey || '')) {
-              throw new Error('OpenAI is selected, but no API key is saved. Add it in Profile settings.');
-            }
+          const context = {
+            topic: capitalizeWords((file.name || '').replace(/\.pdf$/i, '')) || 'Study Guide',
+            facets: keywordCandidates(studyText).map(capitalizeWords),
+            keyIdeas: createTextSummaryParts(studyText),
+            difficulty: normalizeDifficulty(pdfConfig.difficulty || settings.defaultDifficulty || 'medium'),
+            answerHint: '',
+            requestedType: null,
+            description: `Draft generated from OpenAI using ${file.name}. Review and edit wording/answers before publishing.`
+          };
 
-            const context = {
-              topic: capitalizeWords((file.name || '').replace(/\.pdf$/i, '')) || 'Study Guide',
-              facets: keywordCandidates(studyText).map(capitalizeWords),
-              keyIdeas: createTextSummaryParts(studyText),
-              difficulty: normalizeDifficulty(settings.defaultDifficulty || 'medium'),
-              answerHint: '',
-              requestedType: null,
-              description: `Draft generated from OpenAI using ${file.name}. Review and edit wording/answers before publishing.`
-            };
+          const quiz = await callOpenAiForQuiz({
+            model: settings.openaiModel,
+            apiKey: settings.openaiApiKey,
+            systemPrompt: openAiSystemPrompt(),
+            userPrompt: buildOpenAiPromptFromStudyText(file.name, studyText, pdfConfig),
+            context
+          });
 
-            quiz = await callOpenAiForQuiz({
-              model: settings.openaiModel,
-              apiKey: settings.openaiApiKey,
-              systemPrompt: openAiSystemPrompt(),
-              userPrompt: buildOpenAiPromptFromStudyText(file.name, studyText),
-              context
-            });
-          } else {
-            quiz = buildLocalQuizFromStudyText(studyText, file.name);
-          }
-
-          const finalQuiz = reviewEnabled ? reviewQuizWithPrompts(quiz) : quiz;
+          const finalQuiz = reviewEnabled ? await reviewQuizWithPrompts(quiz) : quiz;
           applyQuizToEditor(finalQuiz);
-          statusEl.textContent = useOpenAi
-            ? `Generated ${quiz.questions.length} question(s) from ${file.name} with OpenAI. Review and save when ready.`
-            : `Generated ${quiz.questions.length} question(s) from ${file.name}. Review and save when ready.`;
+          statusEl.textContent = `Generated ${quiz.questions.length} question(s) from ${file.name} with OpenAI. Review and save when ready.`;
         } catch (err) {
           const msg = (err && err.message) ? err.message : 'Failed to generate quiz from PDF';
           statusEl.textContent = msg;

@@ -1176,7 +1176,7 @@ async function initProfilePage() {
         const openaiApiKey = (openAiKeyEl.value || '').trim();
         const defaultDifficulty = (defaultDifficultyEl.value || 'medium').trim().toLowerCase();
         const parsedCount = parseInt(defaultCountEl.value, 10);
-        const defaultQuestionCount = Number.isFinite(parsedCount) ? Math.max(3, Math.min(20, parsedCount)) : 8;
+        const defaultQuestionCount = Number.isFinite(parsedCount) ? Math.max(3, Math.min(50, parsedCount)) : 8;
         const reviewGeneratedQuestions = !!reviewPromptsEl.checked;
 
         if (provider === 'openai' && !openaiApiKey) {
