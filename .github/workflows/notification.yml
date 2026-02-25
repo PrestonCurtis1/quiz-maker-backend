@@ -46,7 +46,7 @@ jobs:
           PAYLOAD=$(jq -n \
             --arg title "Activity: $EVENT" \
             --arg desc "Triggered by ${ACTOR:-Unknown}" \
-            '{embeds: [{title: $title, description: $desc, color: 3447003}]}')
+            '{embeds: [{title: $title, description: $desc, color: 3447002}]}')
           
           curl -v --fail -X POST \
           -H "Authorization: Bot $TOKEN" \
