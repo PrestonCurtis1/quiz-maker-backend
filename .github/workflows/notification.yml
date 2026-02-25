@@ -4,39 +4,40 @@ on:
   push:
   pull_request:
   issues:
+    types: [opened, edited, closed]
   issue_comment:
-  commit_comment:
+    types: [created, edited]
   watch:
+    types: [started]
   fork:
   release:
+    types: [published]
   discussion:
   discussion_comment:
   workflow_run:
     workflows: ["*"]
-  workflow_job:
+    types: [requested, completed]
   check_run:
+    types: [created, completed]
   check_suite:
+    types: [requested, completed]
   create:
   delete:
   deployment:
   deployment_status:
   member:
+    types: [added]
   label:
+    types: [created, edited, deleted]
   milestone:
-  page_build:
-  registry_package:
+    types: [created, opened, closed]
   status:
-  wiki:
-  pull_request_review:
-  pull_request_review_comment:
-  repository_dispatch:
-  schedule:
-    - cron: '0 * * * *'
-  gollum:
+  gollum: # This covers Wiki events
   project:
+    types: [created, updated]
   public:
-  repository:
   workflow_dispatch:
+  repository_dispatch:
 
 jobs:
   notify:
@@ -49,11 +50,9 @@ jobs:
         run: |
           ACTOR="${{ github.actor }}"
           EVENT="${{ github.event_name }}"
-          
-          # Prepare the payload
           PAYLOAD=$(jq -n \
             --arg title "Activity: $EVENT" \
-            --arg desc "Triggered by $ACTOR in repository ${{ github.repository }}" \
+            --arg desc "Triggered by $ACTOR" \
             '{embeds: [{title: $title, description: $desc, color: 3447003}]}')
           
           curl -X POST \
