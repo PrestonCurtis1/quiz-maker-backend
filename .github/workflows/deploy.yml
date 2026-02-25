@@ -30,28 +30,25 @@ jobs:
         env:
           DISCORD_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
           USER_IDS: ${{ secrets.DISCORD_USER_ID }}
-          STATUS: ${{ job.status }}
         run: |
           for USER_ID in $USER_IDS; do
-            # Create/Get DM Channel
-            CHANNEL_DATA=$(curl -s -X POST https://discord.com/api/v10/users/@me/channels \
+            echo "Attempting to send DM to User: $USER_ID"
+            
+            # 1. Create DM channel
+            RESPONSE=$(curl -s -X POST https://discord.com/api/v10/users/@me/channels \
               -H "Authorization: Bot $DISCORD_TOKEN" \
               -H "Content-Type: application/json" \
               -d "{\"recipient_id\": \"$USER_ID\"}")
             
-            # Extract ID and Type
-            DM_CHANNEL_ID=$(echo $CHANNEL_DATA | jq -r '.id')
-            CHANNEL_TYPE=$(echo $CHANNEL_DATA | jq -r '.type')
-
-            # Force check: Only proceed if it's a DM (Type 1)
-            if [ "$CHANNEL_TYPE" == "1" ]; then
-              MSG=$([ "$STATUS" == "success" ] && echo "🚀 **Deployment Successful!** Quiz-Maker is live." || echo "❌ **Deployment Failed!**")
-              
-              curl -s -X POST https://discord.com/api/v10/channels/$DM_CHANNEL_ID/messages \
-                -H "Authorization: Bot $DISCORD_TOKEN" \
-                -H "Content-Type: application/json" \
-                -d "{\"content\": \"$MSG\"}"
-            else
-              echo "Target channel for $USER_ID is not a DM (Type 1). API response: $CHANNEL_DATA"
-            fi
+            echo "API Response: $RESPONSE"
+            
+            # 2. Extract ID
+            DM_CHANNEL_ID=$(echo $RESPONSE | jq -r '.id')
+            echo "Extracted Channel ID: $DM_CHANNEL_ID"
+            
+            # 3. Send message directly to the ID
+            curl -s -X POST https://discord.com/api/v10/channels/$DM_CHANNEL_ID/messages \
+              -H "Authorization: Bot $DISCORD_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d '{"content": "Testing DM connectivity..."}'
           done
