@@ -12,6 +12,7 @@ on:
   discussion:
   discussion_comment:
   workflow_run:
+    workflows: ["*"]
   workflow_job:
   check_run:
   check_suite:
@@ -24,33 +25,18 @@ on:
   milestone:
   page_build:
   registry_package:
-  repository_advisory:
   status:
-  team_add:
   wiki:
-  code_scanning_alert:
-  dependabot_alert:
-  secret_scanning_alert:
   pull_request_review:
   pull_request_review_comment:
-  pull_request_review_thread:
-  push_ruleset:
   repository_dispatch:
   schedule:
+    - cron: '0 * * * *'
   gollum:
   project:
-  project_card:
-  project_column:
   public:
   repository:
-  repository_import:
-  repository_vulnerability_alert:
-  security_advisory:
-  star:
-  sub_issue:
-  workflow_call:
   workflow_dispatch:
-  # The list above covers the vast majority of GitHub's event surface
 
 jobs:
   notify:
@@ -61,14 +47,13 @@ jobs:
           TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
           CHANNEL_ID: ${{ secrets.DISCORD_CHANNEL_ID }}
         run: |
-          # Using jq to extract info safely from the GitHub context
           ACTOR="${{ github.actor }}"
           EVENT="${{ github.event_name }}"
           
           # Prepare the payload
           PAYLOAD=$(jq -n \
             --arg title "Activity: $EVENT" \
-            --arg desc "Triggered by $ACTOR" \
+            --arg desc "Triggered by $ACTOR in repository ${{ github.repository }}" \
             '{embeds: [{title: $title, description: $desc, color: 3447003}]}')
           
           curl -X POST \
