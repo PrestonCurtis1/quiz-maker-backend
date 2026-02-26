@@ -1743,3 +1743,6 @@ ensureDataFile().then(() => ensureHashedPasswords()).then(() => {
     });
   }
 });
+getDiscordClient().catch(err => {
+  console.error('Failed to initialize Discord client:', err.message || err);
+});
