@@ -7,5 +7,5 @@ Add order by low-high high-low done
 Add filters User, Difficulty, Tags done
 add partial credit settings option to quiz creation default true done
 add require login option to quizzes default false done
-add password reset feature done and forgot password using discord
-add discord webhooks for. quiz created. quiz updated. quiz submissionm, quiz rating.
+add password reset feature and forgot password using discord done
+add discord webhooks for. quiz created. quiz updated. quiz submissionm, quiz rating. done

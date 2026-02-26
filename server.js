@@ -588,9 +588,6 @@ async function getDiscordClient() {
         partials: [Partials.Channel]
       });
       await client.login(DISCORD_BOT_TOKEN);
-      client.once('ready', () => {
-        console.log(`[Discord] Logged in as ${client.user.tag}`);
-      });
       return client;
     })().catch(err => {
       discordClientPromise = null;
@@ -1743,6 +1740,16 @@ ensureDataFile().then(() => ensureHashedPasswords()).then(() => {
     });
   }
 });
-getDiscordClient().catch(err => {
-  console.error('Failed to initialize Discord client:', err.message || err);
-});
+async function intializeDiscordClient() {
+  const client = await getDiscordClient().catch(err => {
+    console.error('Failed to initialize Discord client:', err.message || err);
+  });
+  try{
+    client.once('clientReady', () => {
+      console.log(`[Discord] Logged in as ${client.user.tag}`);
+    })
+  } catch(err) {
+    console.error('Error setting up Discord client event handlers:', err.message || err);
+  }
+}
+intializeDiscordClient();
