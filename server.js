@@ -1692,8 +1692,6 @@ app.post('/api/users/:id/avatar', upload.single('avatar'), async (req, res) => {
 
 // get quizzes for user
 app.get('/api/users/:id/quizzes', async (req, res) => {
-  const authUser = getAuthUser(req);
-  if (!authUser || authUser.id !== req.params.id) return res.status(403).json({ error: 'Forbidden' });
   const data = await readData();
   const userQuizzes = data.filter(q => q.owner === req.params.id);
   res.json(userQuizzes.map(q => ({

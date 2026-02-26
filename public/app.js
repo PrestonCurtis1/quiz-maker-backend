@@ -2482,7 +2482,8 @@ async function initProfilePage() {
   const quizzes = await api('/api/users/' + userId + '/quizzes');
   const uq = $('user-quizzes'); if (uq) {
     uq.innerHTML = '';
-    quizzes.forEach(q => {
+    const quizList = Array.isArray(quizzes) ? quizzes : [];
+    quizList.forEach(q => {
       const li = el('li');
       const a = el('a', { href: '/share/' + encodeURIComponent(q.id) }, [ q.title ]);
       li.appendChild(a);
@@ -2493,6 +2494,9 @@ async function initProfilePage() {
       }
       uq.appendChild(li);
     });
+    if (quizList.length === 0) {
+      uq.appendChild(el('li', {}, ['No quizzes yet.']));
+    }
   }
   const ur = $('user-results');
   if (ur) {
