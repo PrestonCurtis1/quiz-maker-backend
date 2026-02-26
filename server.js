@@ -4,6 +4,8 @@ const fsSync = require('fs');
 const path = require('path');
 const http = require('http');
 const https = require('https');
+const crypto = require('crypto');
+const { Client, GatewayIntentBits, Partials } = require('discord.js');
 
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
@@ -15,6 +17,8 @@ const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const RATINGS_FILE = path.join(DATA_DIR, 'ratings.json');
 const ROLES_FILE = path.join(DATA_DIR, 'roles.json');
 const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
+const RESET_CODES_FILE = path.join(DATA_DIR, 'password_reset_codes.json');
+const DISCORD_OAUTH_STATES_FILE = path.join(DATA_DIR, 'discord_oauth_states.json');
 const UPLOAD_DIR = path.join(__dirname, 'public', 'uploads');
 const DEFAULT_AVATAR_FILE = path.join(__dirname, 'public', 'default-avatar.png');
 const PORT = process.env.PORT || 80;
@@ -25,6 +29,13 @@ const SSL_KEY_PATH = process.env.SSL_KEY_PATH || '';
 const SSL_CERT_PATH = process.env.SSL_CERT_PATH || '';
 const SSL_CA_PATH = process.env.SSL_CA_PATH || '';
 const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || 'https://quiz-maker.bendinghub.net';
+const DISCORD_BOT_TOKEN = String(process.env.DISCORD_BOT_TOKEN || '').trim();
+const DISCORD_CLIENT_ID = String(process.env.DISCORD_CLIENT_ID || '').trim();
+const DISCORD_CLIENT_SECRET = String(process.env.DISCORD_CLIENT_SECRET || '').trim();
+const DISCORD_OAUTH_REDIRECT_URI = String(process.env.DISCORD_OAUTH_REDIRECT_URI || '').trim();
+const DISCORD_SERVER_ID = String(process.env.DISCORD_SERVER_ID || '').trim();
+
+let discordClientPromise = null;
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
@@ -74,6 +85,12 @@ async function ensureDataFile() {
     if (!fsSync.existsSync(SETTINGS_FILE)) {
       await fs.writeFile(SETTINGS_FILE, JSON.stringify({}, null, 2), 'utf8');
     }
+    if (!fsSync.existsSync(RESET_CODES_FILE)) {
+      await fs.writeFile(RESET_CODES_FILE, JSON.stringify({}, null, 2), 'utf8');
+    }
+    if (!fsSync.existsSync(DISCORD_OAUTH_STATES_FILE)) {
+      await fs.writeFile(DISCORD_OAUTH_STATES_FILE, JSON.stringify({}, null, 2), 'utf8');
+    }
     // ensure uploads folder exists
     if (!fsSync.existsSync(UPLOAD_DIR)) {
       fsSync.mkdirSync(UPLOAD_DIR, { recursive: true });
@@ -81,6 +98,30 @@ async function ensureDataFile() {
   } catch (err) {
     console.error('Error ensuring data file:', err);
   }
+}
+
+async function readResetCodesStore() {
+  await ensureDataFile();
+  return readJsonObjectFile(RESET_CODES_FILE);
+}
+
+async function writeResetCodesStore(data) {
+  const safe = (data && typeof data === 'object' && !Array.isArray(data)) ? data : {};
+  await fs.writeFile(RESET_CODES_FILE, JSON.stringify(safe, null, 2), 'utf8');
+}
+
+async function readDiscordOAuthStates() {
+  await ensureDataFile();
+  return readJsonObjectFile(DISCORD_OAUTH_STATES_FILE);
+}
+
+async function writeDiscordOAuthStates(data) {
+  const safe = (data && typeof data === 'object' && !Array.isArray(data)) ? data : {};
+  await fs.writeFile(DISCORD_OAUTH_STATES_FILE, JSON.stringify(safe, null, 2), 'utf8');
+}
+
+function hashResetCode(code) {
+  return crypto.createHash('sha256').update(String(code || '')).digest('hex');
 }
 
 async function readRatings() {
@@ -334,6 +375,111 @@ function escapeXml(value) {
     .replace(/>/g, '&gt;')
     .replace(/\"/g, '&quot;')
     .replace(/'/g, '&apos;');
+}
+
+async function getDiscordClient() {
+  if (!DISCORD_BOT_TOKEN) return null;
+  if (!discordClientPromise) {
+    discordClientPromise = (async () => {
+      const client = new Client({
+        intents: [GatewayIntentBits.Guilds, GatewayIntentBits.DirectMessages],
+        partials: [Partials.Channel]
+      });
+      await client.login(DISCORD_BOT_TOKEN);
+      client.once('ready', () => {
+        console.log(`[Discord] Logged in as ${client.user.tag}`);
+      });
+      return client;
+    })().catch(err => {
+      discordClientPromise = null;
+      throw err;
+    });
+  }
+  return discordClientPromise;
+}
+
+async function sendDiscordResetCode(user, code, expiresAtMs) {
+  const discordId = String(user && user.discordId ? user.discordId : '').trim();
+  if (!discordId) return false;
+  const client = await getDiscordClient();
+  if (!client) return false;
+
+  const expiresAtIso = new Date(Number(expiresAtMs) || Date.now()).toISOString();
+  const targetUser = await client.users.fetch(discordId);
+  if (!targetUser) return false;
+
+  await targetUser.send([
+    'Password reset code requested for your quiz account.',
+    `Username: ${String(user && user.username ? user.username : '')}`,
+    `Code: ${String(code || '')}`,
+    `Expires at: ${expiresAtIso}`
+  ].join('\n'));
+  return true;
+}
+
+function resolveDiscordOAuthRedirectUri(req) {
+  if (DISCORD_OAUTH_REDIRECT_URI) return DISCORD_OAUTH_REDIRECT_URI;
+  return `${getPublicBaseUrl(req)}/api/auth/discord/callback`;
+}
+
+function buildDiscordOAuthAuthorizeUrl(req, state, includeGuildJoin = true) {
+  const redirectUri = resolveDiscordOAuthRedirectUri(req);
+  const scope = includeGuildJoin ? 'identify guilds.join' : 'identify';
+  const params = new URLSearchParams({
+    response_type: 'code',
+    client_id: DISCORD_CLIENT_ID,
+    scope,
+    redirect_uri: redirectUri,
+    state,
+    prompt: 'consent'
+  });
+  return `https://discord.com/api/oauth2/authorize?${params.toString()}`;
+}
+
+async function issuePasswordResetCodeForUser(user) {
+  if (!user || !user.username) return false;
+
+  const code = String(crypto.randomInt(100000, 1000000));
+  const expiresAt = Date.now() + (15 * 60 * 1000);
+  const resetStore = await readResetCodesStore();
+  resetStore[user.username] = {
+    codeHash: hashResetCode(code),
+    expiresAt
+  };
+  await writeResetCodesStore(resetStore);
+
+  let deliveredToDiscord = false;
+  try {
+    deliveredToDiscord = await sendDiscordResetCode(user, code, expiresAt);
+  } catch (deliveryErr) {
+    console.error('[Password Reset] Discord delivery failed:', deliveryErr.message || deliveryErr);
+  }
+
+  if (!deliveredToDiscord) {
+    console.warn(`[Password Reset] username=${user.username} code=${code} expiresIn=15m`);
+  }
+
+  return true;
+}
+
+async function addUserToDiscordServer(discordUserId, userAccessToken) {
+  if (!DISCORD_SERVER_ID) return;
+  if (!DISCORD_BOT_TOKEN) throw new Error('DISCORD_BOT_TOKEN is required to add users to server');
+
+  const endpoint = `https://discord.com/api/guilds/${encodeURIComponent(DISCORD_SERVER_ID)}/members/${encodeURIComponent(discordUserId)}`;
+  const response = await fetch(endpoint, {
+    method: 'PUT',
+    headers: {
+      'Authorization': `Bot ${DISCORD_BOT_TOKEN}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ access_token: userAccessToken })
+  });
+
+  if (!response.ok) {
+    const txt = await response.text();
+    throw new Error(`Guild join failed (${response.status}): ${txt.slice(0, 200)}`);
+  }
 }
 
 app.get('/sitemap.xml', async (req, res) => {
@@ -624,6 +770,103 @@ app.post('/api/users/login', async (req, res) => {
   res.json({ id: user.id, username: user.username, token });
 });
 
+app.post('/api/users/reset-password', async (req, res) => {
+  const { username, currentPassword, newPassword } = req.body || {};
+  if (!username || !currentPassword || !newPassword) return res.status(400).json({ error: 'Invalid payload' });
+
+  const nextPassword = String(newPassword || '').trim();
+  if (nextPassword.length < 4) return res.status(400).json({ error: 'New password must be at least 4 characters' });
+
+  const users = await readUsers();
+  const user = users.find(u => u.username === username);
+  if (!user) return res.status(400).json({ error: 'Invalid credentials' });
+
+  const ok = await bcrypt.compare(String(currentPassword), user.password);
+  if (!ok) return res.status(400).json({ error: 'Invalid credentials' });
+
+  user.password = await bcrypt.hash(nextPassword, 10);
+  await writeUsers(users);
+  res.json({ ok: true });
+});
+
+app.post('/api/users/forgot-password', async (req, res) => {
+  const payload = (req.body && typeof req.body === 'object') ? req.body : {};
+  const username = String(payload.username || payload.user || '').trim();
+
+  if (!username) {
+    return res.json({ ok: true, message: 'If the username exists, a reset code has been issued.' });
+  }
+
+  const users = await readUsers();
+  const user = users.find(u => u.username === username);
+  if (user) {
+    await issuePasswordResetCodeForUser(user);
+  }
+
+  res.json({ ok: true, message: 'If the username exists, a reset code has been issued.' });
+});
+
+app.get('/api/users/forgot-password/oauth/start', async (req, res) => {
+  if (!DISCORD_CLIENT_ID || !DISCORD_CLIENT_SECRET) {
+    return res.status(500).json({ error: 'Discord OAuth is not configured' });
+  }
+
+  const username = String(req.query.username || '').trim();
+  if (!username) {
+    return res.status(400).json({ error: 'Username is required' });
+  }
+
+  const state = crypto.randomBytes(24).toString('hex');
+  const now = Date.now();
+  const expiresAt = now + (10 * 60 * 1000);
+
+  const states = await readDiscordOAuthStates();
+  Object.keys(states).forEach(key => {
+    const entry = states[key];
+    if (!entry || !entry.expiresAt || Number(entry.expiresAt) < now) delete states[key];
+  });
+
+  states[state] = {
+    purpose: 'forgot-password',
+    username,
+    includeGuildJoin: false,
+    expiresAt
+  };
+  await writeDiscordOAuthStates(states);
+
+  res.json({ url: buildDiscordOAuthAuthorizeUrl(req, state, false) });
+});
+
+app.post('/api/users/forgot-password/confirm', async (req, res) => {
+  const { username, code, newPassword } = req.body || {};
+  if (!username || !code || !newPassword) return res.status(400).json({ error: 'Invalid payload' });
+
+  const nextPassword = String(newPassword || '').trim();
+  if (nextPassword.length < 4) return res.status(400).json({ error: 'New password must be at least 4 characters' });
+
+  const users = await readUsers();
+  const user = users.find(u => u.username === username);
+  if (!user) return res.status(400).json({ error: 'Invalid reset code' });
+
+  const resetStore = await readResetCodesStore();
+  const entry = resetStore[user.username];
+  if (!entry || !entry.codeHash || !entry.expiresAt) return res.status(400).json({ error: 'Invalid reset code' });
+  if (Date.now() > Number(entry.expiresAt)) {
+    delete resetStore[user.username];
+    await writeResetCodesStore(resetStore);
+    return res.status(400).json({ error: 'Reset code expired' });
+  }
+
+  const providedHash = hashResetCode(code);
+  if (providedHash !== entry.codeHash) return res.status(400).json({ error: 'Invalid reset code' });
+
+  user.password = await bcrypt.hash(nextPassword, 10);
+  await writeUsers(users);
+  delete resetStore[user.username];
+  await writeResetCodesStore(resetStore);
+  res.json({ ok: true });
+});
+
 app.get('/api/users', async (req, res) => {
   const users = await readUsers();
   res.json(users.map(u => ({ id: u.id, username: u.username, avatar: u.avatar || null })));
@@ -664,6 +907,179 @@ app.put('/api/users/:id/settings', async (req, res) => {
   store[req.params.id] = next;
   await writeSettingsStore(store);
   res.json(next);
+});
+
+app.get('/api/users/:id/discord', async (req, res) => {
+  const authUser = getAuthUser(req);
+  if (!authUser || authUser.id !== req.params.id) return res.status(403).json({ error: 'Forbidden' });
+
+  const users = await readUsers();
+  const user = users.find(u => u.id === req.params.id);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+
+  res.json({ discordId: String(user.discordId || '').trim() });
+});
+
+app.get('/api/users/:id/discord/oauth/start', async (req, res) => {
+  const authUser = getAuthUser(req);
+  if (!authUser || authUser.id !== req.params.id) return res.status(403).json({ error: 'Forbidden' });
+
+  if (!DISCORD_CLIENT_ID || !DISCORD_CLIENT_SECRET) {
+    return res.status(500).json({ error: 'Discord OAuth is not configured' });
+  }
+
+  const state = crypto.randomBytes(24).toString('hex');
+  const includeGuildJoin = String(req.query.includeGuildJoin || '1') !== '0';
+  const now = Date.now();
+  const expiresAt = now + (10 * 60 * 1000);
+
+  const states = await readDiscordOAuthStates();
+  Object.keys(states).forEach(key => {
+    const entry = states[key];
+    if (!entry || !entry.expiresAt || Number(entry.expiresAt) < now) delete states[key];
+  });
+
+  states[state] = {
+    purpose: 'link-discord',
+    userId: authUser.id,
+    includeGuildJoin,
+    expiresAt
+  };
+  await writeDiscordOAuthStates(states);
+
+  res.json({ url: buildDiscordOAuthAuthorizeUrl(req, state, includeGuildJoin) });
+});
+
+app.get('/api/auth/discord/callback', async (req, res) => {
+  const code = String(req.query.code || '').trim();
+  const state = String(req.query.state || '').trim();
+  const error = String(req.query.error || '').trim();
+  const errorDescription = String(req.query.error_description || '').trim();
+
+  if (error) {
+    return res.status(400).send(`Discord OAuth error: ${escapeHtml(errorDescription || error)}`);
+  }
+  if (!code || !state) {
+    return res.status(400).send('Missing OAuth code or state.');
+  }
+  if (!DISCORD_CLIENT_ID || !DISCORD_CLIENT_SECRET) {
+    return res.status(500).send('Discord OAuth is not configured.');
+  }
+
+  const states = await readDiscordOAuthStates();
+  const entry = states[state];
+  delete states[state];
+  await writeDiscordOAuthStates(states);
+
+  if (!entry || !entry.expiresAt || Date.now() > Number(entry.expiresAt)) {
+    return res.status(400).send('OAuth session expired or invalid. Please try again.');
+  }
+
+  const oauthPurpose = String(entry.purpose || 'link-discord');
+
+  try {
+    const redirectUri = resolveDiscordOAuthRedirectUri(req);
+    const tokenResponse = await fetch('https://discord.com/api/oauth2/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: DISCORD_CLIENT_ID,
+        client_secret: DISCORD_CLIENT_SECRET,
+        grant_type: 'authorization_code',
+        code,
+        redirect_uri: redirectUri
+      }).toString()
+    });
+
+    if (!tokenResponse.ok) {
+      const txt = await tokenResponse.text();
+      throw new Error(`Token exchange failed (${tokenResponse.status}): ${txt.slice(0, 200)}`);
+    }
+
+    const tokenPayload = await tokenResponse.json();
+    const accessToken = tokenPayload && tokenPayload.access_token ? String(tokenPayload.access_token) : '';
+    if (!accessToken) throw new Error('Missing Discord access token');
+
+    const userResponse = await fetch('https://discord.com/api/users/@me', {
+      headers: { Authorization: `Bearer ${accessToken}` }
+    });
+    if (!userResponse.ok) {
+      const txt = await userResponse.text();
+      throw new Error(`Discord user fetch failed (${userResponse.status}): ${txt.slice(0, 200)}`);
+    }
+
+    const discordUser = await userResponse.json();
+    const discordId = String(discordUser && discordUser.id ? discordUser.id : '').trim();
+    if (!/^\d{17,20}$/.test(discordId)) throw new Error('Invalid Discord user ID from OAuth response');
+
+    if (oauthPurpose === 'forgot-password') {
+      const username = String(entry.username || '').trim();
+      let accountMatched = false;
+      if (username) {
+        const users = await readUsers();
+        const user = users.find(u => u.username === username);
+        if (user && String(user.discordId || '').trim() === discordId) {
+          accountMatched = true;
+          await issuePasswordResetCodeForUser(user);
+        }
+      }
+
+      const loginParams = new URLSearchParams({
+        resetRequested: '1',
+        resetUser: username || ''
+      });
+      if (!accountMatched) loginParams.set('resetMismatch', '1');
+      const loginUrl = `/login.html?${loginParams.toString()}`;
+      return res.type('html').send(`<!doctype html><html><body><script>window.location.replace(${JSON.stringify(loginUrl)});</script><p>If the account is eligible, a reset code has been issued. <a href="${escapeHtml(loginUrl)}">Continue</a></p></body></html>`);
+    }
+
+    if (!entry.userId) {
+      return res.status(400).send('OAuth session expired or invalid. Please try again.');
+    }
+
+    const shouldJoinServer = !!(entry && entry.includeGuildJoin !== false);
+    if (DISCORD_SERVER_ID && shouldJoinServer) {
+      await addUserToDiscordServer(discordId, accessToken);
+    }
+
+    const users = await readUsers();
+    const user = users.find(u => u.id === entry.userId);
+    if (!user) return res.status(404).send('Account not found.');
+
+    user.discordId = discordId;
+    await writeUsers(users);
+
+    const profileUrl = `/profile.html?user=${encodeURIComponent(entry.userId)}&discordLinked=1`;
+    return res.type('html').send(`<!doctype html><html><body><script>window.location.replace(${JSON.stringify(profileUrl)});</script><p>Discord linked. <a href="${escapeHtml(profileUrl)}">Continue</a></p></body></html>`);
+  } catch (err) {
+    console.error('[Discord OAuth] Callback failed:', err.message || err);
+    return res.status(500).send('Discord OAuth linking failed. Please try again.');
+  }
+});
+
+app.put('/api/users/:id/discord', async (req, res) => {
+  const authUser = getAuthUser(req);
+  if (!authUser || authUser.id !== req.params.id) return res.status(403).json({ error: 'Forbidden' });
+
+  const payload = (req.body && typeof req.body === 'object') ? req.body : {};
+  const rawDiscordId = payload.discordId == null ? '' : String(payload.discordId).trim();
+
+  if (rawDiscordId) {
+    return res.status(400).json({ error: 'Use Discord OAuth2 link flow to set Discord ID' });
+  }
+
+  const users = await readUsers();
+  const user = users.find(u => u.id === req.params.id);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+
+  if (rawDiscordId) {
+    user.discordId = rawDiscordId;
+  } else {
+    delete user.discordId;
+  }
+
+  await writeUsers(users);
+  res.json({ ok: true, discordId: rawDiscordId });
 });
 
 app.delete('/api/users/:id', async (req, res) => {

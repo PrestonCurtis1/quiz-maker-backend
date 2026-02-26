@@ -15,7 +15,7 @@ A minimal, high-performance Node.js and Express backend for creating, editing, a
 
 ### Prerequisites
 
-* [Node.js](https://nodejs.org/) (v16+ recommended)
+* [Node.js](https://nodejs.org/) (v18+ recommended)
 * `npm`
 
 ### Installation
@@ -60,6 +60,11 @@ You can customize the server behavior using the following environment variables:
 | `HTTP_PORT` | Port for HTTP (default: 80). |
 | `PUBLIC_BASE_URL` | Your domain (e.g., `https://myquiz.com`) for correct social preview links. |
 | `ENABLE_HTTP_REDIRECT` | Set to `false` to disable automatic HTTP to HTTPS redirect. |
+| `DISCORD_BOT_TOKEN` | Optional Discord bot token used by `discord.js` to DM forgot-password reset codes directly. |
+| `DISCORD_CLIENT_ID` | Discord OAuth2 application client ID for verified account linking. |
+| `DISCORD_CLIENT_SECRET` | Discord OAuth2 application client secret for code exchange. |
+| `DISCORD_OAUTH_REDIRECT_URI` | Optional explicit OAuth callback URL (defaults to `<PUBLIC_BASE_URL>/api/auth/discord/callback`). |
+| `DISCORD_SERVER_ID` | Optional Discord server (guild) ID to auto-join users during OAuth link using `guilds.join`. |
 
 ### HTTPS Setup
 

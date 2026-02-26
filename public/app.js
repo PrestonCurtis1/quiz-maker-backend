@@ -779,6 +779,8 @@ function updateUserUI() {
   const passwordLabel = document.getElementById('password-label');
   const signupBtn = document.getElementById('signup');
   const loginBtn = document.getElementById('login');
+  const forgotPasswordOpenBtn = document.getElementById('forgot-password-open');
+  const resetPasswordOpenBtn = document.getElementById('reset-password-open');
   if (cur) {
     if (currentUserSpan) { currentUserSpan.textContent = `Signed in: ${cur.username}`; currentUserSpan.classList.remove('hidden'); }
     if (logoutBtn) logoutBtn.classList.remove('hidden');
@@ -788,6 +790,8 @@ function updateUserUI() {
     if (passwordLabel) passwordLabel.classList.add('hidden');
     if (signupBtn) signupBtn.classList.add('hidden');
     if (loginBtn) loginBtn.classList.add('hidden');
+    if (forgotPasswordOpenBtn) forgotPasswordOpenBtn.classList.add('hidden');
+    if (resetPasswordOpenBtn) resetPasswordOpenBtn.classList.remove('hidden');
   } else {
     if (currentUserSpan) currentUserSpan.classList.add('hidden');
     if (logoutBtn) logoutBtn.classList.add('hidden');
@@ -797,6 +801,8 @@ function updateUserUI() {
     if (passwordLabel) passwordLabel.classList.remove('hidden');
     if (signupBtn) signupBtn.classList.remove('hidden');
     if (loginBtn) loginBtn.classList.remove('hidden');
+    if (forgotPasswordOpenBtn) forgotPasswordOpenBtn.classList.remove('hidden');
+    if (resetPasswordOpenBtn) resetPasswordOpenBtn.classList.add('hidden');
   }
   // update profile nav links to include current user id when signed in
   const profileLinks = document.querySelectorAll('#nav-profile');
@@ -826,6 +832,185 @@ async function login() {
   setCurrentUser(res);
   u.value = '';
   p.value = '';
+}
+
+async function resetPassword() {
+  const currentUser = getCurrentUser();
+  if (!currentUser || !currentUser.username) {
+    alert('Please login first.');
+    return;
+  }
+
+  const existing = document.getElementById('reset-password-overlay');
+  if (existing) existing.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'reset-password-overlay';
+  overlay.className = 'ai-draft-overlay';
+
+  const modal = document.createElement('div');
+  modal.className = 'ai-draft-modal';
+  modal.setAttribute('role', 'dialog');
+  modal.setAttribute('aria-modal', 'true');
+
+  const title = el('h3', {}, ['Reset Password']);
+  const currentInput = el('input', { type: 'password', placeholder: 'Current password' });
+  const newInput = el('input', { type: 'password', placeholder: 'New password' });
+  const confirmInput = el('input', { type: 'password', placeholder: 'Confirm new password' });
+
+  const close = () => {
+    document.removeEventListener('keydown', onKeyDown);
+    overlay.remove();
+  };
+
+  const onKeyDown = event => {
+    if (event.key === 'Escape') close();
+  };
+
+  const submitBtn = el('button', {
+    type: 'button',
+    onclick: async () => {
+      const currentPassword = currentInput.value || '';
+      const newPassword = newInput.value || '';
+      const confirmPassword = confirmInput.value || '';
+
+      if (!currentPassword || !newPassword || !confirmPassword) {
+        alert('Fill out all password fields.');
+        return;
+      }
+      if (newPassword !== confirmPassword) {
+        alert('New passwords do not match.');
+        return;
+      }
+
+      const res = await api('/api/users/reset-password', {
+        method: 'POST',
+        body: JSON.stringify({ username: currentUser.username, currentPassword, newPassword })
+      });
+      if (res && res.error) return alert(res.error);
+
+      alert('Password updated');
+      close();
+    }
+  }, ['Reset Password']);
+
+  const cancelBtn = el('button', { type: 'button', onclick: () => close() }, ['Cancel']);
+  const actions = el('div', { class: 'ai-draft-actions' }, [cancelBtn, submitBtn]);
+
+  modal.appendChild(title);
+  modal.appendChild(currentInput);
+  modal.appendChild(newInput);
+  modal.appendChild(confirmInput);
+  modal.appendChild(actions);
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+  document.addEventListener('keydown', onKeyDown);
+  overlay.addEventListener('click', event => {
+    if (event.target === overlay) close();
+  });
+  currentInput.focus();
+}
+
+async function forgotPassword(prefillUsername = '') {
+  const normalizedPrefillUsername = (typeof prefillUsername === 'string') ? prefillUsername : '';
+  const currentUser = getCurrentUser();
+  if (currentUser) {
+    alert('Use Reset Password while logged in.');
+    return;
+  }
+
+  const existing = document.getElementById('forgot-password-overlay');
+  if (existing) existing.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'forgot-password-overlay';
+  overlay.className = 'ai-draft-overlay';
+
+  const modal = document.createElement('div');
+  modal.className = 'ai-draft-modal';
+  modal.setAttribute('role', 'dialog');
+  modal.setAttribute('aria-modal', 'true');
+
+  const title = el('h3', {}, ['Forgot Password']);
+  const helper = el('div', { class: 'q-help' }, ['Request a reset code first, then enter it to set a new password.']);
+  const usernameInput = el('input', { type: 'text', placeholder: 'Username' });
+  usernameInput.value = String(normalizedPrefillUsername || '').trim();
+  const codeInput = el('input', { type: 'text', placeholder: 'Reset code' });
+  const newInput = el('input', { type: 'password', placeholder: 'New password' });
+  const confirmInput = el('input', { type: 'password', placeholder: 'Confirm new password' });
+
+  const close = () => {
+    document.removeEventListener('keydown', onKeyDown);
+    overlay.remove();
+  };
+
+  const onKeyDown = event => {
+    if (event.key === 'Escape') close();
+  };
+
+  const requestCodeBtn = el('button', {
+    type: 'button',
+    onclick: async () => {
+      const username = (usernameInput.value || '').trim();
+      if (!username) {
+        alert('Enter your username first.');
+        return;
+      }
+      const res = await api('/api/users/forgot-password/oauth/start?username=' + encodeURIComponent(username));
+      if (res && res.error) return alert(res.error);
+      if (res && res.url) {
+        window.location.href = res.url;
+        return;
+      }
+      alert('Unable to start Discord OAuth for reset code request.');
+    }
+  }, ['Request Code']);
+
+  const submitBtn = el('button', {
+    type: 'button',
+    onclick: async () => {
+      const username = (usernameInput.value || '').trim();
+      const code = (codeInput.value || '').trim();
+      const newPassword = newInput.value || '';
+      const confirmPassword = confirmInput.value || '';
+
+      if (!username || !code || !newPassword || !confirmPassword) {
+        alert('Fill out all fields.');
+        return;
+      }
+      if (newPassword !== confirmPassword) {
+        alert('New passwords do not match.');
+        return;
+      }
+
+      const res = await api('/api/users/forgot-password/confirm', {
+        method: 'POST',
+        body: JSON.stringify({ username, code, newPassword })
+      });
+      if (res && res.error) return alert(res.error);
+
+      alert('Password updated. You can now log in.');
+      close();
+    }
+  }, ['Update Password']);
+
+  const cancelBtn = el('button', { type: 'button', onclick: () => close() }, ['Cancel']);
+  const actions = el('div', { class: 'ai-draft-actions' }, [cancelBtn, requestCodeBtn, submitBtn]);
+
+  modal.appendChild(title);
+  modal.appendChild(helper);
+  modal.appendChild(usernameInput);
+  modal.appendChild(codeInput);
+  modal.appendChild(newInput);
+  modal.appendChild(confirmInput);
+  modal.appendChild(actions);
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+  document.addEventListener('keydown', onKeyDown);
+  overlay.addEventListener('click', event => {
+    if (event.target === overlay) close();
+  });
+  usernameInput.focus();
 }
 
 function logout() { setCurrentUser(null); }
@@ -1698,7 +1883,9 @@ initEditorTagControls();
 // auth bindings
 const signupBtn = $('signup'); if (signupBtn) signupBtn.addEventListener('click', signup);
 const loginBtn = $('login'); if (loginBtn) loginBtn.addEventListener('click', login);
+const forgotPasswordOpenBtn = $('forgot-password-open'); if (forgotPasswordOpenBtn) forgotPasswordOpenBtn.addEventListener('click', forgotPassword);
 const logoutBtn = $('logout'); if (logoutBtn) logoutBtn.addEventListener('click', logout);
+const resetPasswordOpenBtn = $('reset-password-open'); if (resetPasswordOpenBtn) resetPasswordOpenBtn.addEventListener('click', resetPassword);
 
 // search
 const searchBtn = $('search-btn'); if (searchBtn) searchBtn.addEventListener('click', () => refreshQuizList());
@@ -1748,6 +1935,7 @@ if (localStorage.getItem('quiz_theme') === 'dark') document.body.classList.add('
 async function initProfilePage() {
   const params = new URLSearchParams(window.location.search);
   const userParam = params.get('user');
+  const discordLinkedFlag = params.get('discordLinked');
   const cur = getCurrentUser();
   let userId = null;
   if (userParam) userId = userParam; else if (cur) userId = cur.id; else return;
@@ -1794,6 +1982,10 @@ async function initProfilePage() {
   const reviewPromptsEl = $('settings-review-prompts');
   const saveSettingsBtn = $('settings-save');
   const settingsStatusEl = $('settings-status');
+  const discordIdEl = $('settings-discord-id');
+  const discordSaveBtn = $('settings-discord-save');
+  const discordUnlinkBtn = $('settings-discord-unlink');
+  const discordStatusEl = $('settings-discord-status');
 
   function toggleOpenAiSettings() {
     if (!aiProviderEl || !openAiWrapEl) return;
@@ -1847,10 +2039,69 @@ async function initProfilePage() {
         if (settingsStatusEl) settingsStatusEl.textContent = (saved && saved.error) ? (saved.error || 'Failed to save settings.') : 'Settings saved.';
       });
     }
+
+    if (discordIdEl) {
+      const discordRes = await api('/api/users/' + userId + '/discord');
+      if (discordRes && !discordRes.error) {
+        discordIdEl.value = discordRes.discordId || '';
+      }
+    }
+
+    if (discordSaveBtn && discordIdEl) {
+      discordSaveBtn.addEventListener('click', async () => {
+        const proceed = confirm(
+          'Click OK to give "Join Servers for You" and "Access your username, avatar, and banner" permissions.\n\n' +
+          'Or click Cancel to only give "Access your username, avatar, and banner" permissions.'
+        );
+        const oauthStartPath = proceed
+          ? ('/api/users/' + userId + '/discord/oauth/start')
+          : ('/api/users/' + userId + '/discord/oauth/start?includeGuildJoin=0');
+        const saveRes = await api(oauthStartPath);
+        if (discordStatusEl) {
+          discordStatusEl.textContent = (saveRes && saveRes.error)
+            ? (saveRes.error || 'Failed to start Discord OAuth.')
+            : (proceed
+              ? 'Redirecting to Discord OAuth...'
+              : 'Redirecting to Discord OAuth without "Join Servers for you" permission...');
+        }
+        if (saveRes && !saveRes.error && saveRes.url) {
+          let oauthUrl = saveRes.url;
+          if (!proceed) {
+            try {
+              const parsed = new URL(oauthUrl, window.location.origin);
+              parsed.searchParams.set('scope', 'identify');
+              oauthUrl = parsed.toString();
+            } catch (err) {}
+          }
+          window.location.href = oauthUrl;
+        }
+      });
+    }
+
+    if (discordUnlinkBtn && discordIdEl) {
+      discordUnlinkBtn.addEventListener('click', async () => {
+        const unlinkRes = await api('/api/users/' + userId + '/discord', {
+          method: 'PUT',
+          body: JSON.stringify({ discordId: '' })
+        });
+        if (unlinkRes && !unlinkRes.error) discordIdEl.value = '';
+        if (discordStatusEl) {
+          discordStatusEl.textContent = (unlinkRes && unlinkRes.error)
+            ? (unlinkRes.error || 'Failed to unlink Discord.')
+            : 'Discord account unlinked.';
+        }
+      });
+    }
   }
 
   if (settingsStatusEl && !isOwnProfile) {
     settingsStatusEl.textContent = 'Settings are only available on your own profile.';
+  }
+  if (discordStatusEl && !isOwnProfile) {
+    discordStatusEl.textContent = 'Discord linking is only available on your own profile.';
+  }
+  if (discordStatusEl && isOwnProfile && discordLinkedFlag === '1') {
+    discordStatusEl.textContent = 'Discord account linked via OAuth2.';
   }
 
   const adminDeleteBtn = $('admin-delete-user');
@@ -2059,3 +2310,15 @@ async function initEditPage() {
 initEditPage();
 
 updateUserUI();
+
+const isLoginPage = window.location.pathname.endsWith('/login.html') || window.location.pathname === '/login.html';
+if (isLoginPage) {
+  const params = new URLSearchParams(window.location.search);
+  const resetUser = String(params.get('resetUser') || '').trim();
+  if (params.get('resetMismatch') === '1') {
+    alert('The Discord account you authorized does not match the account linked to that username.');
+  }
+  if (params.get('resetRequested') === '1') {
+    setTimeout(() => forgotPassword(resetUser), 0);
+  }
+}

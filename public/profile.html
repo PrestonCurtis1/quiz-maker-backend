@@ -85,10 +85,26 @@
 
         <button id="settings-save" type="button">Save Settings</button>
         <div id="settings-status" class="q-help"></div>
+
+        <hr />
+        <h3>Discord Account</h3>
+        <label for="settings-discord-id">Discord User ID</label>
+        <input id="settings-discord-id" type="text" placeholder="Not linked" readonly />
+        <div class="q-help">Use OAuth2 to verify ownership before linking.</div>
+        <div class="q-help">
+          The bot requests the "Join Servers for you" permission so it can DM password reset codes for account recovery.
+          You can choose to only give the bot identify permissions, but you won't be able to use the Discord-linked password reset feature.
+          And if you forget your password without giving the bot permission to DM you, you won't be able to reset it at all
+        </div>
+        <div>
+          <button id="settings-discord-save" type="button">Link with Discord OAuth2</button>
+          <button id="settings-discord-unlink" type="button">Unlink Discord</button>
+        </div>
+        <div id="settings-discord-status" class="q-help"></div>
       </div>
     </section>
   </main>
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-  <script src="app.js?v=20260224e"></script>
+  <script src="app.js?v=20260225s"></script>
 </body>
 </html>
