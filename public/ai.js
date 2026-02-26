@@ -1183,6 +1183,361 @@
     return quiz;
   }
 
+  const LOCAL_AI_MODEL_ID = 'Xenova/flan-t5-small';
+  const LOCAL_AI_MODULE_URL = 'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2';
+  let localAiGeneratorPromise = null;
+
+  function ensureSentence(text) {
+    const cleaned = normalizeSpaces(text || '');
+    if (!cleaned) return '';
+    const last = cleaned.charAt(cleaned.length - 1);
+    if (last === '.' || last === '!' || last === '?') return cleaned;
+    return `${cleaned}.`;
+  }
+
+  function parseGeneratedLineItems(rawText, maxCount = 12) {
+    const source = normalizeSpaces(rawText || '');
+    const lineParts = splitLines(source)
+      .map(line => normalizeSpaces(line.replace(/^[-*•\d\s.)]+/, '')))
+      .map(line => line.replace(/^"|"$/g, '').trim())
+      .filter(line => line.length >= 6)
+      .map(ensureSentence);
+
+    const sentenceParts = source
+      .split(/(?<=[.!?])\s+/)
+      .map(s => normalizeSpaces(s.replace(/^[-*•\d\s.)]+/, '')))
+      .filter(s => s.length >= 12)
+      .map(ensureSentence);
+
+    return uniqueStrings([...lineParts, ...sentenceParts], maxCount);
+  }
+
+  function parseGeneratedPairs(rawText, maxCount = 8) {
+    const lines = splitLines(rawText || '').map(line => normalizeSpaces(line));
+    const pairs = [];
+    for (const line of lines) {
+      if (!line) continue;
+      const arrowIndex = line.indexOf('->');
+      const colonIndex = line.indexOf(':');
+      const separatorIndex = arrowIndex > 0 ? arrowIndex : (colonIndex > 0 ? colonIndex : -1);
+      const separatorSize = arrowIndex > 0 ? 2 : 1;
+      if (separatorIndex <= 0) continue;
+      const left = normalizeSpaces(line.slice(0, separatorIndex).replace(/^[-*•\d\s.)]+/, ''));
+      const right = ensureSentence(line.slice(separatorIndex + separatorSize));
+      if (!left || !right) continue;
+      pairs.push({ left, right });
+      if (pairs.length >= maxCount) break;
+    }
+    return pairs;
+  }
+
+  function ensureKnowledgeMinimums(knowledge, draftQuiz, topic) {
+    const safeKnowledge = knowledge && typeof knowledge === 'object' ? knowledge : {};
+    const result = {
+      trueClaims: uniqueStrings(Array.isArray(safeKnowledge.trueClaims) ? safeKnowledge.trueClaims : [], 20),
+      falseClaims: uniqueStrings(Array.isArray(safeKnowledge.falseClaims) ? safeKnowledge.falseClaims : [], 20),
+      matchingPairs: Array.isArray(safeKnowledge.matchingPairs) ? safeKnowledge.matchingPairs.slice(0, 12) : []
+    };
+
+    const topicLc = normalizeSpaces((topic || 'general knowledge').toLowerCase());
+    const questions = draftQuiz && Array.isArray(draftQuiz.questions) ? draftQuiz.questions : [];
+
+    questions.forEach(q => {
+      if (!q || typeof q !== 'object') return;
+      if ((q.type === 'multiple' || q.type === 'multi') && Array.isArray(q.options)) {
+        const correctIndex = q.type === 'multiple'
+          ? (Number.isInteger(q.correct) ? q.correct : 0)
+          : 0;
+        const validCorrectIndex = correctIndex >= 0 && correctIndex < q.options.length ? correctIndex : 0;
+        const correct = normalizeSpaces(q.options[validCorrectIndex] || '');
+        if (correct) result.trueClaims.push(ensureSentence(correct));
+
+        q.options.forEach((opt, idx) => {
+          const cleaned = normalizeSpaces(opt || '');
+          if (!cleaned) return;
+          if (idx === validCorrectIndex || (q.type === 'multi' && Array.isArray(q.correct) && q.correct.includes(idx))) {
+            result.trueClaims.push(ensureSentence(cleaned));
+          } else {
+            result.falseClaims.push(ensureSentence(cleaned));
+          }
+        });
+      }
+
+      if (q.type === 'matching' && Array.isArray(q.pairs)) {
+        q.pairs.forEach(pair => {
+          const left = normalizeSpaces((pair && pair.left) || '');
+          const right = ensureSentence((pair && pair.right) || '');
+          if (left && right) result.matchingPairs.push({ left, right });
+        });
+      }
+    });
+
+    if (result.trueClaims.length < 4) {
+      result.trueClaims = uniqueStrings([
+        ...result.trueClaims,
+        `Core concepts in ${topicLc} can be analyzed through examples.`,
+        `${topicLc} can be understood using clear definitions and context.`,
+        `Practical applications help reinforce understanding of ${topicLc}.`,
+        `Comparing approaches improves reasoning in ${topicLc}.`
+      ], 20);
+    }
+
+    if (result.falseClaims.length < 4) {
+      result.falseClaims = uniqueStrings([
+        ...result.falseClaims,
+        `${topicLc} has no practical use.`,
+        `${topicLc} always has exactly one rigid interpretation.`,
+        `${topicLc} is unrelated to real-world situations.`,
+        `${topicLc} can be understood without any examples or context.`
+      ], 20);
+    }
+
+    if (result.matchingPairs.length < 3) {
+      result.matchingPairs = [
+        ...result.matchingPairs,
+        { left: 'Core concept', right: ensureSentence(`Key foundational idea in ${topicLc}`) },
+        { left: 'Example', right: ensureSentence(`Practical case connected to ${topicLc}`) },
+        { left: 'Misconception', right: ensureSentence(`Common misunderstanding about ${topicLc}`) }
+      ].slice(0, 8);
+    }
+
+    result.trueClaims = uniqueStrings(result.trueClaims, 20);
+    result.falseClaims = uniqueStrings(result.falseClaims, 20);
+    result.matchingPairs = result.matchingPairs
+      .map(pair => ({ left: normalizeSpaces(pair.left), right: ensureSentence(pair.right) }))
+      .filter(pair => pair.left && pair.right)
+      .slice(0, 12);
+
+    return result;
+  }
+
+  function pickCycled(items, index, fallback) {
+    if (!Array.isArray(items) || !items.length) return fallback;
+    return items[Math.abs(index) % items.length] || fallback;
+  }
+
+  async function ensureLocalAiGenerator(onStatus) {
+    if (!localAiGeneratorPromise) {
+      localAiGeneratorPromise = (async () => {
+        const module = await import(LOCAL_AI_MODULE_URL);
+        const env = module && module.env ? module.env : null;
+        if (env) {
+          env.allowLocalModels = false;
+          env.useBrowserCache = true;
+        }
+        return module.pipeline('text2text-generation', LOCAL_AI_MODEL_ID, {
+          quantized: true
+        });
+      })();
+    }
+
+    if (typeof onStatus === 'function') {
+      onStatus('Loading local AI model (first run can take a while)...');
+    }
+
+    try {
+      return await localAiGeneratorPromise;
+    } catch (err) {
+      localAiGeneratorPromise = null;
+      throw err;
+    }
+  }
+
+  async function generateLocalAiText(generator, prompt, maxNewTokens = 220) {
+    const out = await generator(prompt, {
+      max_new_tokens: maxNewTokens,
+      do_sample: true,
+      temperature: 0.7,
+      top_p: 0.92,
+      repetition_penalty: 1.12
+    });
+
+    const item = Array.isArray(out) ? out[0] : out;
+    const text = item && typeof item.generated_text === 'string'
+      ? item.generated_text
+      : '';
+    return normalizeSpaces(text);
+  }
+
+  async function buildLocalAiKnowledgePack({ topic, focus, prompt, difficulty, studyText, onStatus }) {
+    const generator = await ensureLocalAiGenerator(onStatus);
+    const domain = normalizeSpaces([topic, focus, prompt].filter(Boolean).join('. ')) || topic || 'General Knowledge';
+    const level = normalizeDifficulty(difficulty || 'medium');
+    const sourceExcerpt = normalizeSpaces((studyText || '').slice(0, 1200));
+    const sourceNote = sourceExcerpt
+      ? `Use only information supported by this source excerpt: ${sourceExcerpt}`
+      : '';
+
+    if (typeof onStatus === 'function') onStatus('Generating factual statements with local AI...');
+    const trueRaw = await generateLocalAiText(
+      generator,
+      `Write 12 concise factual statements about ${domain}. Difficulty: ${level}. One statement per line. No numbering. ${sourceNote}`,
+      260
+    );
+
+    if (typeof onStatus === 'function') onStatus('Generating misconceptions with local AI...');
+    const falseRaw = await generateLocalAiText(
+      generator,
+      `Write 12 plausible but incorrect statements (misconceptions) about ${domain}. One per line. No numbering. ${sourceNote}`,
+      260
+    );
+
+    if (typeof onStatus === 'function') onStatus('Generating term-definition pairs with local AI...');
+    const pairRaw = await generateLocalAiText(
+      generator,
+      `Write 8 term-definition pairs for ${domain}. Format each line exactly as term -> definition. ${sourceNote}`,
+      240
+    );
+
+    return {
+      trueClaims: parseGeneratedLineItems(trueRaw, 16),
+      falseClaims: parseGeneratedLineItems(falseRaw, 16),
+      matchingPairs: parseGeneratedPairs(pairRaw, 10)
+    };
+  }
+
+  function enrichQuizWithLocalAiKnowledge(quiz, knowledge, context = {}) {
+    const draft = quiz && typeof quiz === 'object' ? Object.assign({}, quiz) : { questions: [] };
+    const questions = Array.isArray(draft.questions) ? draft.questions.map(q => Object.assign({}, q)) : [];
+    const topicLc = normalizeSpaces((context.topic || 'general knowledge').toLowerCase());
+    const trueClaims = Array.isArray(knowledge && knowledge.trueClaims) ? knowledge.trueClaims : [];
+    const falseClaims = Array.isArray(knowledge && knowledge.falseClaims) ? knowledge.falseClaims : [];
+    const matchingPairs = Array.isArray(knowledge && knowledge.matchingPairs) ? knowledge.matchingPairs : [];
+
+    questions.forEach((question, index) => {
+      if (!question || typeof question !== 'object') return;
+
+      if (question.type === 'multiple') {
+        const correct = pickCycled(trueClaims, index, `A correct statement about ${topicLc}.`);
+        const d1 = pickCycled(falseClaims, index, `An incorrect claim about ${topicLc}.`);
+        const d2 = pickCycled(falseClaims, index + 1, `Another incorrect claim about ${topicLc}.`);
+        const d3 = pickCycled(falseClaims, index + 2, `A misleading claim about ${topicLc}.`);
+        question.options = uniqueStrings([correct, d1, d2, d3], 4);
+        while (question.options.length < 4) {
+          question.options.push(`Additional statement ${question.options.length + 1} about ${topicLc}.`);
+        }
+        question.correct = 0;
+        return;
+      }
+
+      if (question.type === 'multi') {
+        const t1 = pickCycled(trueClaims, index, `Valid point about ${topicLc}.`);
+        const t2 = pickCycled(trueClaims, index + 1, `Another valid point about ${topicLc}.`);
+        const f1 = pickCycled(falseClaims, index, `Incorrect point about ${topicLc}.`);
+        const f2 = pickCycled(falseClaims, index + 1, `Another incorrect point about ${topicLc}.`);
+        question.options = uniqueStrings([t1, f1, t2, f2], 4);
+        while (question.options.length < 4) {
+          question.options.push(`Additional statement ${question.options.length + 1} about ${topicLc}.`);
+        }
+        question.correct = [0, 2].filter(i => i < question.options.length);
+        return;
+      }
+
+      if (question.type === 'matching' && matchingPairs.length >= 3) {
+        question.pairs = matchingPairs.slice(0, 4).map(pair => ({
+          left: normalizeSpaces(pair.left),
+          right: ensureSentence(pair.right)
+        }));
+        return;
+      }
+
+      if (question.type === 'text') {
+        const a1 = pickCycled(trueClaims, index, `${topicLc} basics`);
+        const a2 = pickCycled(trueClaims, index + 1, `${topicLc} applications`);
+        const answers = uniqueStrings([a1, a2], 4);
+        question.answer = answers.length <= 1 ? (answers[0] || `${topicLc} basics`) : answers;
+      }
+    });
+
+    draft.questions = optimizeQuizQuestions(questions, {
+      topic: normalizeSpaces(context.topic || ''),
+      facets: Array.isArray(context.facets) ? context.facets : [],
+      keyIdeas: Array.isArray(context.keyIdeas) ? context.keyIdeas : [],
+      difficulty: normalizeDifficulty(context.difficulty || 'medium'),
+      answerHint: normalizeSpaces(context.answerHint || ''),
+      defaultType: normalizeRequestedType(context.requestedType) || 'multiple'
+    });
+    return draft;
+  }
+
+  async function buildLocalQuizFromPromptWithModel(rawPrompt, overrides = {}, options = {}) {
+    const draft = buildLocalQuizFromPrompt(rawPrompt, overrides);
+    const topic = normalizeSpaces(overrides.topic || parsePromptInstructions(rawPrompt || '').topic || 'General Knowledge');
+    const focus = normalizeSpaces(overrides.focus || '');
+
+    try {
+      const knowledge = await buildLocalAiKnowledgePack({
+        topic,
+        focus,
+        prompt: rawPrompt,
+        difficulty: overrides.difficulty,
+        studyText: '',
+        onStatus: options.onStatus
+      });
+      const usableKnowledge = ensureKnowledgeMinimums(knowledge, draft, topic);
+
+      if (typeof options.onStatus === 'function') options.onStatus('Assembling quiz from local AI output...');
+      return enrichQuizWithLocalAiKnowledge(draft, usableKnowledge, {
+        topic,
+        facets: extractPromptFacets(rawPrompt),
+        keyIdeas: splitPromptSegments(rawPrompt),
+        difficulty: overrides.difficulty,
+        answerHint: overrides && overrides.constraints ? overrides.constraints.answerHint : '',
+        requestedType: overrides.requestedType
+      });
+    } catch (err) {
+      if (typeof options.onStatus === 'function') {
+        options.onStatus('Local AI model unavailable, using deterministic local fallback.');
+      }
+      if (typeof console !== 'undefined' && console.warn) {
+        console.warn('Local AI generation failed; fallback enabled.', err);
+      }
+      return draft;
+    }
+  }
+
+  async function buildLocalQuizFromStudyTextWithModel(rawText, fileName, options = {}) {
+    const draft = buildLocalQuizFromStudyText(rawText, fileName);
+    const topic = capitalizeWords((fileName || 'Study Guide').replace(/\.pdf$/i, '')) || 'Study Guide';
+
+    try {
+      const knowledge = await buildLocalAiKnowledgePack({
+        topic,
+        focus: normalizeSpaces(options.generalPrompt || ''),
+        prompt: normalizeSpaces(options.generalPrompt || ''),
+        difficulty: normalizeDifficulty(options.difficulty || 'medium'),
+        studyText: rawText,
+        onStatus: options.onStatus
+      });
+      const usableKnowledge = ensureKnowledgeMinimums(knowledge, draft, topic);
+
+      const enriched = enrichQuizWithLocalAiKnowledge(draft, usableKnowledge, {
+        topic,
+        facets: keywordCandidates(rawText).map(capitalizeWords),
+        keyIdeas: createTextSummaryParts(rawText),
+        difficulty: normalizeDifficulty(options.difficulty || 'medium'),
+        answerHint: '',
+        requestedType: null
+      });
+
+      const targetCount = clampNumber(options.questionCount, 3, 50, 8);
+      if (Array.isArray(enriched.questions)) {
+        enriched.questions = enriched.questions.slice(0, targetCount);
+      }
+      return enriched;
+    } catch (err) {
+      if (typeof options.onStatus === 'function') {
+        options.onStatus('Local AI model unavailable, using deterministic local fallback.');
+      }
+      if (typeof console !== 'undefined' && console.warn) {
+        console.warn('Local AI PDF generation failed; fallback enabled.', err);
+      }
+      const targetCount = clampNumber(options.questionCount, 3, 50, 8);
+      if (Array.isArray(draft.questions)) draft.questions = draft.questions.slice(0, targetCount);
+      return draft;
+    }
+  }
+
   function buildLocalQuizFromPrompt(rawPrompt, overrides = {}) {
     const prompt = (rawPrompt || '').trim();
     const rules = parsePromptInstructions(prompt);
@@ -1882,7 +2237,11 @@
             context
           });
         } else {
-          quiz = buildLocalQuizFromPrompt(prompt, config);
+          quiz = await buildLocalQuizFromPromptWithModel(prompt, config, {
+            onStatus: message => {
+              if (message) statusEl.textContent = message;
+            }
+          });
         }
 
         const finalQuiz = reviewEnabled ? await reviewQuizWithPrompts(quiz) : quiz;
@@ -1913,13 +2272,11 @@
         }
 
         const settings = await readRuntimeAiSettings(options);
-        const useOpenAi = (settings.aiProvider || 'local') === 'openai';
+        const preferredProvider = settings.aiProvider || 'local';
+        const useOpenAi = preferredProvider === 'openai';
         const hasOpenAiKey = !!normalizeSpaces(settings.openaiApiKey || '');
-        if (!useOpenAi || !hasOpenAiKey) {
-          const msg = 'Generate from PDF requires OpenAI. Set provider to OpenAI and add an API key in Profile settings.';
-          statusEl.textContent = msg;
-          alert(msg);
-          return;
+        if (useOpenAi && !hasOpenAiKey) {
+          statusEl.textContent = 'OpenAI key missing; using Local AI for PDF generation.';
         }
 
         const pdfConfig = await askPdfQuizConfig(settings);
@@ -1932,7 +2289,9 @@
         pdfButtonEl.disabled = true;
         const originalPdfBtnText = pdfButtonEl.textContent;
         pdfButtonEl.textContent = 'Reading PDF...';
-        statusEl.textContent = 'Extracting text from PDF for OpenAI...';
+        statusEl.textContent = useOpenAi && hasOpenAiKey
+          ? 'Extracting text from PDF for OpenAI...'
+          : 'Extracting text from PDF for Local AI...';
 
         try {
           const studyText = await extractTextFromPdfFile(file);
@@ -1940,27 +2299,41 @@
             throw new Error('Could not read enough text from this PDF.');
           }
 
-          const context = {
-            topic: capitalizeWords((file.name || '').replace(/\.pdf$/i, '')) || 'Study Guide',
-            facets: keywordCandidates(studyText).map(capitalizeWords),
-            keyIdeas: createTextSummaryParts(studyText),
-            difficulty: normalizeDifficulty(pdfConfig.difficulty || settings.defaultDifficulty || 'medium'),
-            answerHint: '',
-            requestedType: null,
-            description: `Draft generated from OpenAI using ${file.name}. Review and edit wording/answers before publishing.`
-          };
+          let quiz;
+          if (useOpenAi && hasOpenAiKey) {
+            const context = {
+              topic: capitalizeWords((file.name || '').replace(/\.pdf$/i, '')) || 'Study Guide',
+              facets: keywordCandidates(studyText).map(capitalizeWords),
+              keyIdeas: createTextSummaryParts(studyText),
+              difficulty: normalizeDifficulty(pdfConfig.difficulty || settings.defaultDifficulty || 'medium'),
+              answerHint: '',
+              requestedType: null,
+              description: `Draft generated from OpenAI using ${file.name}. Review and edit wording/answers before publishing.`
+            };
 
-          const quiz = await callOpenAiForQuiz({
-            model: settings.openaiModel,
-            apiKey: settings.openaiApiKey,
-            systemPrompt: openAiSystemPrompt(),
-            userPrompt: buildOpenAiPromptFromStudyText(file.name, studyText, pdfConfig),
-            context
-          });
+            quiz = await callOpenAiForQuiz({
+              model: settings.openaiModel,
+              apiKey: settings.openaiApiKey,
+              systemPrompt: openAiSystemPrompt(),
+              userPrompt: buildOpenAiPromptFromStudyText(file.name, studyText, pdfConfig),
+              context
+            });
+          } else {
+            quiz = await buildLocalQuizFromStudyTextWithModel(studyText, file.name, {
+              questionCount: pdfConfig.questionCount,
+              difficulty: pdfConfig.difficulty,
+              generalPrompt: pdfConfig.generalPrompt,
+              onStatus: message => {
+                if (message) statusEl.textContent = message;
+              }
+            });
+          }
 
           const finalQuiz = reviewEnabled ? await reviewQuizWithPrompts(quiz) : quiz;
           applyQuizToEditor(finalQuiz);
-          statusEl.textContent = `Generated ${quiz.questions.length} question(s) from ${file.name} with OpenAI. Review and save when ready.`;
+          statusEl.textContent = useOpenAi && hasOpenAiKey
+            ? `Generated ${quiz.questions.length} question(s) from ${file.name} with OpenAI. Review and save when ready.`
+            : `Generated ${quiz.questions.length} question(s) from ${file.name} with Local AI. Review and save when ready.`;
         } catch (err) {
           const msg = (err && err.message) ? err.message : 'Failed to generate quiz from PDF';
           statusEl.textContent = msg;
@@ -1976,7 +2349,9 @@
   window.AIQuiz = {
     initAiQuizGenerator,
     buildLocalQuizFromPrompt,
+    buildLocalQuizFromPromptWithModel,
     buildLocalQuizFromStudyText,
+    buildLocalQuizFromStudyTextWithModel,
     extractTextFromPdfFile
   };
 })();

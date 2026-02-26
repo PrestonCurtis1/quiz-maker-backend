@@ -93,8 +93,10 @@
         <div class="q-help">Use OAuth2 to verify ownership before linking.</div>
         <div class="q-help">
           The bot requests the "Join Servers for you" permission so it can DM password reset codes for account recovery.
+          this is because Discord require bot to have atleast 1 shared server with the user to be able to DM them.
           You can choose to only give the bot identify permissions, but you won't be able to use the Discord-linked password reset feature.
           And if you forget your password without giving the bot permission to DM you, you won't be able to reset it at all
+          alernatively you can just give identify permissions and then manually join the discord server. with this <a href=" https://discord.gg/v9saTZQzJx" target="_blank">link</a>
         </div>
         <div>
           <button id="settings-discord-save" type="button">Link with Discord OAuth2</button>
