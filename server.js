@@ -263,6 +263,207 @@ function normalizeUserSettings(input) {
   };
 }
 
+const WEBHOOK_EVENT_KEYS = [
+  'quiz_created',
+  'quiz_updated',
+  'quiz_deleted',
+  'quiz_submission',
+  'quiz_rating'
+];
+
+function getDefaultWebhookSettings() {
+  return {
+    eventUrls: {
+      quiz_created: '',
+      quiz_updated: '',
+      quiz_deleted: '',
+      quiz_submission: '',
+      quiz_rating: ''
+    },
+    events: {
+      quiz_created: false,
+      quiz_updated: false,
+      quiz_deleted: false,
+      quiz_submission: false,
+      quiz_rating: false
+    }
+  };
+}
+
+function normalizeWebhookSettings(input) {
+  const payload = (input && typeof input === 'object') ? input : {};
+  const eventsPayload = (payload.events && typeof payload.events === 'object') ? payload.events : {};
+  const eventUrlsPayload = (payload.eventUrls && typeof payload.eventUrls === 'object') ? payload.eventUrls : {};
+  const defaults = getDefaultWebhookSettings();
+  const normalizedEvents = Object.assign({}, defaults.events);
+  const normalizedEventUrls = Object.assign({}, defaults.eventUrls);
+
+  WEBHOOK_EVENT_KEYS.forEach(key => {
+    normalizedEvents[key] = !!eventsPayload[key];
+    const rawEventUrl = String(eventUrlsPayload[key] || '').trim();
+    normalizedEventUrls[key] = /^https?:\/\//i.test(rawEventUrl) ? rawEventUrl : '';
+  });
+
+  const rawLegacyUrl = String(payload.url || '').trim();
+  const legacyUrl = /^https?:\/\//i.test(rawLegacyUrl) ? rawLegacyUrl : '';
+  if (legacyUrl) {
+    WEBHOOK_EVENT_KEYS.forEach(key => {
+      if (!normalizedEventUrls[key] && normalizedEvents[key]) {
+        normalizedEventUrls[key] = legacyUrl;
+      }
+    });
+  }
+
+  return {
+    eventUrls: normalizedEventUrls,
+    events: normalizedEvents
+  };
+}
+
+async function getWebhookSettingsForUser(userId) {
+  if (!userId) return getDefaultWebhookSettings();
+  const store = await readSettingsStore();
+  const entry = (store[userId] && typeof store[userId] === 'object') ? store[userId] : {};
+  return normalizeWebhookSettings(entry.webhooks || {});
+}
+
+async function saveWebhookSettingsForUser(userId, webhookSettings) {
+  if (!userId) return getDefaultWebhookSettings();
+  const normalized = normalizeWebhookSettings(webhookSettings);
+  const store = await readSettingsStore();
+  const existing = (store[userId] && typeof store[userId] === 'object') ? store[userId] : {};
+  existing.webhooks = normalized;
+  store[userId] = existing;
+  await writeSettingsStore(store);
+  return normalized;
+}
+
+async function sendWebhookEventForUser(userId, eventName, payload = {}) {
+  if (!userId || !eventName) return false;
+  const settings = await getWebhookSettingsForUser(userId);
+  return sendWebhookEventWithSettings(settings, eventName, payload);
+}
+
+async function sendWebhookEventWithSettings(settings, eventName, payload = {}) {
+  if (!eventName) return false;
+  if (!settings.events || !settings.events[eventName]) return false;
+  const eventUrl = String(settings.eventUrls && settings.eventUrls[eventName] ? settings.eventUrls[eventName] : '').trim();
+  if (!/^https?:\/\//i.test(eventUrl)) return false;
+
+  const timestamp = new Date().toISOString();
+  const safePayload = (payload && typeof payload === 'object') ? payload : {};
+  const parsedUrl = (() => {
+    try {
+      return new URL(eventUrl);
+    } catch (err) {
+      return null;
+    }
+  })();
+  const isDiscordWebhook = !!(parsedUrl && /(^|\.)discord(app)?\.com$/i.test(parsedUrl.hostname) && /\/api\/webhooks\//i.test(parsedUrl.pathname));
+
+  const eventLabelMap = {
+    quiz_created: 'Quiz Created',
+    quiz_updated: 'Quiz Updated',
+    quiz_deleted: 'Quiz Deleted',
+    quiz_submission: 'Quiz Submission',
+    quiz_rating: 'Quiz Rating'
+  };
+  const eventColorMap = {
+    quiz_created: 0x57F287,
+    quiz_updated: 0xFEE75C,
+    quiz_deleted: 0xED4245,
+    quiz_submission: 0x5865F2,
+    quiz_rating: 0xEB459E
+  };
+
+  const eventLabel = eventLabelMap[eventName] || eventName;
+  const quizId = String(safePayload.quizId || '').trim();
+  const quizTitle = String(safePayload.quizTitle || '').trim();
+  const quizLink = quizId ? `${String(PUBLIC_BASE_URL || '').replace(/\/+$/, '')}/take.html?quiz=${encodeURIComponent(quizId)}` : '';
+  const ownerUserId = String(safePayload.ownerUserId || '').trim();
+  const actorUserId = String(safePayload.actorUserId || '').trim();
+  const submitterUserId = String(safePayload.submitterUserId || '').trim();
+  const raterUserId = String(safePayload.raterUserId || '').trim();
+  const ratingReviewText = String(safePayload.review || '').trim();
+
+  const userIds = Array.from(new Set([ownerUserId, actorUserId, submitterUserId, raterUserId].filter(Boolean)));
+  let usernameById = {};
+  if (isDiscordWebhook && userIds.length) {
+    try {
+      const users = await readUsers();
+      usernameById = users.reduce((acc, user) => {
+        const id = String(user && user.id ? user.id : '').trim();
+        const username = String(user && user.username ? user.username : '').trim();
+        if (id && username) acc[id] = username;
+        return acc;
+      }, {});
+    } catch (err) {}
+  }
+
+  function toUserLabel(userId) {
+    const id = String(userId || '').trim();
+    if (!id) return '—';
+    const username = String(usernameById[id] || '').trim();
+    return username ? `${username} (${id})` : id;
+  }
+
+  function toInlineValue(value, fallback = '—') {
+    const txt = String(value == null ? '' : value).trim();
+    return txt || fallback;
+  }
+
+  const body = isDiscordWebhook
+    ? {
+      content: `📣 ${eventLabel}`,
+      embeds: [{
+        title: eventLabel,
+        color: eventColorMap[eventName] || 0x5865F2,
+        description: quizTitle
+          ? `**${quizTitle}**${quizLink ? `\n[Open Quiz](${quizLink})` : ''}`
+          : (quizLink ? `[Open Quiz](${quizLink})` : 'Quiz webhook notification'),
+        timestamp,
+        fields: [
+          { name: 'Event', value: toInlineValue(eventName), inline: true },
+          { name: 'Quiz ID', value: toInlineValue(quizId), inline: true },
+          { name: 'Owner', value: toUserLabel(ownerUserId), inline: true },
+          { name: 'Actor', value: toUserLabel(actorUserId), inline: true },
+          { name: 'Submitter', value: toUserLabel(submitterUserId), inline: true },
+          { name: 'Rater', value: toUserLabel(raterUserId), inline: true },
+          { name: 'Score', value: toInlineValue(safePayload.score), inline: true },
+          { name: 'Rating', value: toInlineValue(safePayload.rating), inline: true },
+          { name: 'Review', value: toInlineValue(ratingReviewText, '—').slice(0, 1024), inline: false }
+        ].filter(field => field.value !== '—')
+      }]
+    }
+    : {
+      event: eventName,
+      timestamp,
+      payload: safePayload
+    };
+
+  const response = await fetch(eventUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+
+  if (!response.ok) {
+    const txt = await response.text();
+    throw new Error(`Webhook request failed (${response.status}): ${txt.slice(0, 200)}`);
+  }
+
+  return true;
+}
+
+async function sendWebhookEventForQuiz(quiz, eventName, payload = {}) {
+  if (!quiz || !quiz.owner) return false;
+  const hasQuizWebhooks = !!(quiz.webhooks && typeof quiz.webhooks === 'object');
+  const settings = hasQuizWebhooks
+    ? normalizeWebhookSettings(quiz.webhooks)
+    : await getWebhookSettingsForUser(quiz.owner);
+  return sendWebhookEventWithSettings(settings, eventName, payload);
+}
+
 function requireAuth(req, res, next) {
   const user = getAuthUser(req);
   if (!user) return res.status(401).json({ error: 'Unauthorized' });
@@ -317,6 +518,7 @@ function sanitizeQuestionForPublic(question) {
 function sanitizeQuizForPublic(quiz) {
   const safeQuiz = Object.assign({}, quiz);
   safeQuiz.questions = (quiz.questions || []).map(sanitizeQuestionForPublic);
+  delete safeQuiz.webhooks;
   return safeQuiz;
 }
 
@@ -656,7 +858,7 @@ app.get('/api/quizzes/:id/edit', async (req, res) => {
 app.post('/api/quizzes', async (req, res) => {
   const authUser = getAuthUser(req);
   if (!authUser) return res.status(401).json({ error: 'Unauthorized' });
-  const { title, questions, description, difficulty, tags, partialCreditEnabled, requireLogin, showQuestionResults, showCorrectAnswersForIncorrect } = req.body;
+  const { title, questions, description, difficulty, tags, partialCreditEnabled, requireLogin, showQuestionResults, showCorrectAnswersForIncorrect, webhooks } = req.body;
   if (!title || !Array.isArray(questions)) return res.status(400).json({ error: 'Invalid payload' });
   const normalizedDifficulty = ['easy', 'medium', 'hard'].includes(String(difficulty || '').toLowerCase())
     ? String(difficulty).toLowerCase()
@@ -681,15 +883,27 @@ app.post('/api/quizzes', async (req, res) => {
     showQuestionResults: !!showQuestionResults,
     showCorrectAnswersForIncorrect: !!showCorrectAnswersForIncorrect
   };
+  if (webhooks && typeof webhooks === 'object') {
+    quiz.webhooks = normalizeWebhookSettings(webhooks);
+  }
   data.push(quiz);
   await writeData(data);
+
+  sendWebhookEventForQuiz(quiz, 'quiz_created', {
+    quizId: id,
+    quizTitle: title,
+    ownerUserId: authUser.id
+  }).catch(err => {
+    console.error('[Webhook] quiz_created failed:', err.message || err);
+  });
+
   res.json({ id });
 });
 
 app.put('/api/quizzes/:id', async (req, res) => {
   const authUser = getAuthUser(req);
   if (!authUser) return res.status(401).json({ error: 'Unauthorized' });
-  const { title, questions, description, difficulty, tags, partialCreditEnabled, requireLogin, showQuestionResults, showCorrectAnswersForIncorrect } = req.body;
+  const { title, questions, description, difficulty, tags, partialCreditEnabled, requireLogin, showQuestionResults, showCorrectAnswersForIncorrect, webhooks } = req.body;
   if (!title || !Array.isArray(questions)) return res.status(400).json({ error: 'Invalid payload' });
   const normalizedDifficulty = ['easy', 'medium', 'hard'].includes(String(difficulty || '').toLowerCase())
     ? String(difficulty).toLowerCase()
@@ -714,8 +928,40 @@ app.put('/api/quizzes/:id', async (req, res) => {
   data[idx].requireLogin = !!requireLogin;
   data[idx].showQuestionResults = !!showQuestionResults;
   data[idx].showCorrectAnswersForIncorrect = !!showCorrectAnswersForIncorrect;
+  if (webhooks === null) {
+    delete data[idx].webhooks;
+  } else if (webhooks && typeof webhooks === 'object') {
+    data[idx].webhooks = normalizeWebhookSettings(webhooks);
+  }
   await writeData(data);
+
+  sendWebhookEventForQuiz(data[idx], 'quiz_updated', {
+    quizId: data[idx].id,
+    quizTitle: data[idx].title,
+    actorUserId: authUser.id
+  }).catch(err => {
+    console.error('[Webhook] quiz_updated failed:', err.message || err);
+  });
+
   res.json({ ok: true });
+});
+
+app.put('/api/quizzes/:id/webhooks', async (req, res) => {
+  const authUser = getAuthUser(req);
+  if (!authUser) return res.status(401).json({ error: 'Unauthorized' });
+
+  const data = await readData();
+  const idx = data.findIndex(item => item.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: 'Not found' });
+
+  const canModerate = await isModerator(authUser.id);
+  if (!canModerate && data[idx].owner && data[idx].owner !== authUser.id) return res.status(403).json({ error: 'Forbidden' });
+
+  const normalized = normalizeWebhookSettings(req.body || {});
+  data[idx].webhooks = normalized;
+  await writeData(data);
+
+  res.json({ ok: true, webhooks: normalized });
 });
 
 app.delete('/api/quizzes/:id', async (req, res) => {
@@ -739,6 +985,14 @@ app.delete('/api/quizzes/:id', async (req, res) => {
 
   const ratings = await readRatings();
   await writeRatings(ratings.filter(r => r.quizId !== req.params.id));
+
+  sendWebhookEventForQuiz(quiz, 'quiz_deleted', {
+    quizId: quiz.id,
+    quizTitle: quiz.title,
+    actorUserId: authUser.id
+  }).catch(err => {
+    console.error('[Webhook] quiz_deleted failed:', err.message || err);
+  });
 
   res.json({ ok: true });
 });
@@ -907,6 +1161,29 @@ app.put('/api/users/:id/settings', async (req, res) => {
   store[req.params.id] = next;
   await writeSettingsStore(store);
   res.json(next);
+});
+
+app.get('/api/users/:id/webhooks', async (req, res) => {
+  const authUser = getAuthUser(req);
+  if (!authUser || authUser.id !== req.params.id) return res.status(403).json({ error: 'Forbidden' });
+
+  const webhooks = await getWebhookSettingsForUser(req.params.id);
+  res.json(webhooks);
+});
+
+app.put('/api/users/:id/webhooks', async (req, res) => {
+  const authUser = getAuthUser(req);
+  if (!authUser || authUser.id !== req.params.id) return res.status(403).json({ error: 'Forbidden' });
+
+  const normalized = normalizeWebhookSettings(req.body || {});
+  const invalidEvent = WEBHOOK_EVENT_KEYS.find(key => {
+    const nextUrl = String(normalized.eventUrls && normalized.eventUrls[key] ? normalized.eventUrls[key] : '').trim();
+    return nextUrl && !/^https?:\/\//i.test(nextUrl);
+  });
+  if (invalidEvent) return res.status(400).json({ error: `Webhook URL for ${invalidEvent} must start with http:// or https://` });
+
+  const saved = await saveWebhookSettingsForUser(req.params.id, normalized);
+  res.json(saved);
 });
 
 app.get('/api/users/:id/discord', async (req, res) => {
@@ -1256,6 +1533,16 @@ app.post('/api/quizzes/:id/submit', async (req, res) => {
   results.push(result);
   await writeResults(results);
 
+  sendWebhookEventForQuiz(q, 'quiz_submission', {
+    quizId: q.id,
+    quizTitle: q.title,
+    submitterUserId: userId || null,
+    score: scorePercent,
+    resultId: rid
+  }).catch(err => {
+    console.error('[Webhook] quiz_submission failed:', err.message || err);
+  });
+
   const payload = { total: totalQuestions, correct: totalFraction, score: scorePercent, resultId: rid };
   if (q.showQuestionResults) payload.questionResults = questionFeedback;
   res.json(payload);
@@ -1330,6 +1617,9 @@ app.post('/api/quizzes/:id/rate', async (req, res) => {
   const result = results.find(r => r.id === resultId);
   if (!result || result.quizId !== req.params.id) return res.status(403).json({ error: 'Submit quiz before rating' });
   if (result.userId !== userId) return res.status(403).json({ error: 'Forbidden' });
+  const data = await readData();
+  const quiz = data.find(item => item.id === req.params.id);
+  if (!quiz) return res.status(404).json({ error: 'Not found' });
 
   const ratings = await readRatings();
   const normalizedRating = Math.max(1, Math.min(5, Math.round(rating)));
@@ -1341,6 +1631,18 @@ app.post('/api/quizzes/:id/rate', async (req, res) => {
       existing.review = (typeof review === 'string' && review.length) ? review : existing.review;
       existing.timestamp = new Date().toISOString();
       await writeRatings(ratings);
+
+      sendWebhookEventForQuiz(quiz, 'quiz_rating', {
+        quizId: quiz.id,
+        quizTitle: quiz.title,
+        raterUserId: userId,
+        rating: normalizedRating,
+        review: existing.review || '',
+        updated: true
+      }).catch(err => {
+        console.error('[Webhook] quiz_rating failed:', err.message || err);
+      });
+
       return res.json({ ok: true, updated: true });
     }
   }
@@ -1348,6 +1650,18 @@ app.post('/api/quizzes/:id/rate', async (req, res) => {
   const r = { id, quizId: req.params.id, userId: userId || null, rating: normalizedRating, review: review || '', timestamp: new Date().toISOString() };
   ratings.push(r);
   await writeRatings(ratings);
+
+  sendWebhookEventForQuiz(quiz, 'quiz_rating', {
+    quizId: quiz.id,
+    quizTitle: quiz.title,
+    raterUserId: userId,
+    rating: normalizedRating,
+    review: review || '',
+    updated: false
+  }).catch(err => {
+    console.error('[Webhook] quiz_rating failed:', err.message || err);
+  });
+
   res.json({ ok: true, created: true });
 });
 

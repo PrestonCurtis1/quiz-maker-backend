@@ -1065,6 +1065,265 @@ async function writeUserSettings(userId, settings) {
   return merged;
 }
 
+const WEBHOOK_EVENT_OPTIONS = [
+  { key: 'quiz_created', label: 'Quiz Created' },
+  { key: 'quiz_updated', label: 'Quiz Updated' },
+  { key: 'quiz_deleted', label: 'Quiz Deleted' },
+  { key: 'quiz_submission', label: 'Quiz Submission' },
+  { key: 'quiz_rating', label: 'Quiz Rating' }
+];
+
+function getDefaultWebhookSettings() {
+  return {
+    eventUrls: {
+      quiz_created: '',
+      quiz_updated: '',
+      quiz_deleted: '',
+      quiz_submission: '',
+      quiz_rating: ''
+    },
+    events: {
+      quiz_created: false,
+      quiz_updated: false,
+      quiz_deleted: false,
+      quiz_submission: false,
+      quiz_rating: false
+    }
+  };
+}
+
+function normalizeWebhookSettings(input) {
+  const payload = (input && typeof input === 'object') ? input : {};
+  const eventsPayload = (payload.events && typeof payload.events === 'object') ? payload.events : {};
+  const eventUrlsPayload = (payload.eventUrls && typeof payload.eventUrls === 'object') ? payload.eventUrls : {};
+  const defaults = getDefaultWebhookSettings();
+  const events = Object.assign({}, defaults.events);
+  const eventUrls = Object.assign({}, defaults.eventUrls);
+  WEBHOOK_EVENT_OPTIONS.forEach(option => {
+    events[option.key] = !!eventsPayload[option.key];
+    const rawEventUrl = String(eventUrlsPayload[option.key] || '').trim();
+    eventUrls[option.key] = /^https?:\/\//i.test(rawEventUrl) ? rawEventUrl : '';
+  });
+
+  const rawLegacyUrl = String(payload.url || '').trim();
+  const legacyUrl = /^https?:\/\//i.test(rawLegacyUrl) ? rawLegacyUrl : '';
+  if (legacyUrl) {
+    WEBHOOK_EVENT_OPTIONS.forEach(option => {
+      if (!eventUrls[option.key] && events[option.key]) {
+        eventUrls[option.key] = legacyUrl;
+      }
+    });
+  }
+
+  return {
+    eventUrls,
+    events
+  };
+}
+
+const webhookSettingsCache = {};
+
+async function readUserWebhookSettings(userId, options = {}) {
+  const defaults = getDefaultWebhookSettings();
+  if (!userId) return defaults;
+
+  const force = !!(options && options.force);
+  if (!force && webhookSettingsCache[userId]) {
+    return normalizeWebhookSettings(webhookSettingsCache[userId]);
+  }
+
+  const res = await api('/api/users/' + userId + '/webhooks');
+  if (!res || res.error) {
+    return normalizeWebhookSettings(webhookSettingsCache[userId] || defaults);
+  }
+
+  const normalized = normalizeWebhookSettings(res);
+  webhookSettingsCache[userId] = normalized;
+  return normalized;
+}
+
+async function writeUserWebhookSettings(userId, settings) {
+  const normalized = normalizeWebhookSettings(settings);
+  if (!userId) return normalized;
+
+  const res = await api('/api/users/' + userId + '/webhooks', {
+    method: 'PUT',
+    body: JSON.stringify(normalized)
+  });
+
+  if (res && !res.error) {
+    const saved = normalizeWebhookSettings(res);
+    webhookSettingsCache[userId] = saved;
+    return saved;
+  }
+
+  return Object.assign({}, normalized, {
+    error: (res && res.error) ? res.error : 'Failed to save webhook settings.'
+  });
+}
+
+async function openWebhookSettingsOverlay(context = 'general', options = {}) {
+  const currentUser = getCurrentUser();
+  if (!currentUser || !currentUser.id) {
+    alert('Please log in to configure webhooks.');
+    return;
+  }
+
+  const mode = options && options.mode === 'quiz' ? 'quiz' : 'profile';
+
+  const existing = document.getElementById('webhook-settings-overlay');
+  if (existing) existing.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'webhook-settings-overlay';
+  overlay.className = 'ai-draft-overlay';
+
+  const modal = document.createElement('div');
+  modal.className = 'ai-draft-modal';
+  modal.setAttribute('role', 'dialog');
+  modal.setAttribute('aria-modal', 'true');
+
+  const title = el('h3', {}, ['Discord Webhooks']);
+  const helpText = context === 'profile'
+    ? 'Choose profile-level events like quiz created/deleted or any other events you want sent to your webhook.'
+    : 'Choose editor-focused events like quiz updated, submission, and rating notifications.';
+  const helper = el('div', { class: 'q-help' }, [helpText]);
+
+  const eventsWrap = el('div', { class: 'q-help' });
+  const eventCheckboxes = {};
+  const eventUrlInputs = {};
+
+  const buildCurrentWebhookDraft = () => {
+    const events = {};
+    const eventUrls = {};
+    WEBHOOK_EVENT_OPTIONS.forEach(option => {
+      events[option.key] = !!(eventCheckboxes[option.key] && eventCheckboxes[option.key].checked);
+      eventUrls[option.key] = String(eventUrlInputs[option.key] && eventUrlInputs[option.key].value ? eventUrlInputs[option.key].value : '').trim();
+    });
+    return normalizeWebhookSettings({ eventUrls, events });
+  };
+
+  const syncQuizDraftFromOverlay = () => {
+    if (mode !== 'quiz') return;
+    if (typeof options.onSave !== 'function') return;
+    options.onSave(buildCurrentWebhookDraft());
+  };
+
+  WEBHOOK_EVENT_OPTIONS.forEach(option => {
+    const checkbox = el('input', { type: 'checkbox' });
+    const urlInput = el('input', { type: 'url', placeholder: 'https://discord.com/api/webhooks/...', style: 'margin-left:8px;min-width:340px;' });
+    checkbox.addEventListener('change', () => syncQuizDraftFromOverlay());
+    urlInput.addEventListener('input', () => syncQuizDraftFromOverlay());
+    eventCheckboxes[option.key] = checkbox;
+    eventUrlInputs[option.key] = urlInput;
+    const row = el('label', { class: 'editor-option' }, [checkbox, ' ' + option.label, urlInput]);
+    eventsWrap.appendChild(row);
+  });
+
+  const status = el('div', { class: 'q-help' }, ['']);
+
+  const close = () => {
+    document.removeEventListener('keydown', onKeyDown);
+    overlay.remove();
+  };
+
+  const onKeyDown = event => {
+    if (event.key === 'Escape') close();
+  };
+
+  const saveBtn = el('button', {
+    type: 'button',
+    onclick: async () => {
+      const events = {};
+      const eventUrls = {};
+      const invalidEvent = WEBHOOK_EVENT_OPTIONS.find(option => {
+        const nextUrl = String(eventUrlInputs[option.key] && eventUrlInputs[option.key].value ? eventUrlInputs[option.key].value : '').trim();
+        eventUrls[option.key] = nextUrl;
+        return nextUrl && !/^https?:\/\//i.test(nextUrl);
+      });
+      if (invalidEvent) {
+        status.textContent = `${invalidEvent.label} webhook URL must start with http:// or https://`;
+        return;
+      }
+
+      WEBHOOK_EVENT_OPTIONS.forEach(option => {
+        events[option.key] = !!(eventCheckboxes[option.key] && eventCheckboxes[option.key].checked);
+      });
+
+      saveBtn.disabled = true;
+      const originalText = saveBtn.textContent;
+      saveBtn.textContent = 'Saving...';
+      if (mode === 'quiz') {
+        const localSaved = normalizeWebhookSettings({ eventUrls, events });
+        if (editingId) {
+          const quizWebhookRes = await api('/api/quizzes/' + editingId + '/webhooks', {
+            method: 'PUT',
+            body: JSON.stringify(localSaved)
+          });
+          saveBtn.disabled = false;
+          saveBtn.textContent = originalText;
+          if (quizWebhookRes && quizWebhookRes.error) {
+            status.textContent = quizWebhookRes.error || 'Failed to save quiz-specific webhook settings.';
+            return;
+          }
+          const persisted = normalizeWebhookSettings((quizWebhookRes && quizWebhookRes.webhooks) ? quizWebhookRes.webhooks : localSaved);
+          if (typeof options.onSave === 'function') options.onSave(persisted);
+          status.textContent = 'Quiz-specific webhook settings saved to this quiz.';
+          return;
+        }
+
+        if (typeof options.onSave === 'function') options.onSave(localSaved);
+        saveBtn.disabled = false;
+        saveBtn.textContent = originalText;
+        status.textContent = 'Saved for this draft quiz. Click Save Quiz to persist it.';
+        return;
+      }
+
+      const saved = await writeUserWebhookSettings(currentUser.id, {
+        eventUrls,
+        events
+      });
+      saveBtn.disabled = false;
+      saveBtn.textContent = originalText;
+
+      if (!saved || saved.error) {
+        status.textContent = (saved && saved.error) ? saved.error : 'Failed to save webhook settings.';
+        return;
+      }
+      status.textContent = 'Webhook settings saved.';
+    }
+  }, ['Save Webhooks']);
+
+  const cancelBtn = el('button', { type: 'button', onclick: () => close() }, ['Close']);
+  const actions = el('div', { class: 'ai-draft-actions' }, [cancelBtn, saveBtn]);
+
+  modal.appendChild(title);
+  modal.appendChild(helper);
+  modal.appendChild(eventsWrap);
+  modal.appendChild(status);
+  modal.appendChild(actions);
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+  document.addEventListener('keydown', onKeyDown);
+  overlay.addEventListener('click', event => {
+    if (event.target === overlay) close();
+  });
+
+  const initialSettings = (options && options.initialSettings)
+    ? normalizeWebhookSettings(options.initialSettings)
+    : await readUserWebhookSettings(currentUser.id, { force: true });
+  WEBHOOK_EVENT_OPTIONS.forEach(option => {
+    if (eventCheckboxes[option.key]) {
+      eventCheckboxes[option.key].checked = !!(initialSettings.events && initialSettings.events[option.key]);
+    }
+    if (eventUrlInputs[option.key]) {
+      eventUrlInputs[option.key].value = String(initialSettings.eventUrls && initialSettings.eventUrls[option.key] ? initialSettings.eventUrls[option.key] : '');
+    }
+  });
+  const firstEventInput = WEBHOOK_EVENT_OPTIONS.length ? eventUrlInputs[WEBHOOK_EVENT_OPTIONS[0].key] : null;
+  if (firstEventInput) firstEventInput.focus();
+}
+
 function legacyCopyText(value) {
   try {
     const ta = document.createElement('textarea');
@@ -1091,6 +1350,7 @@ async function fetchRolesForUser(userId) {
 }
 
 let editingId = null;
+let draftQuizWebhookSettings = null;
 
 async function editQuiz(id) {
   const q = await api('/api/quizzes/' + id + '/edit');
@@ -1113,6 +1373,9 @@ async function editQuiz(id) {
   const container = $('questions');
   container.innerHTML = '';
   q.questions.forEach(question => addQuestionBlock(question));
+  draftQuizWebhookSettings = (q.webhooks && typeof q.webhooks === 'object')
+    ? normalizeWebhookSettings(q.webhooks)
+    : null;
   editingId = id;
   const ei = $('edit-indicator'); if (ei) ei.classList.remove('hidden');
   const eid = $('editing-id'); if (eid) eid.textContent = id;
@@ -1820,6 +2083,9 @@ const saveQuizBtn = $('save-quiz'); if (saveQuizBtn) saveQuizBtn.addEventListene
   const requireLogin = $('require-login') ? $('require-login').checked : false;
   const showQuestionResults = $('show-question-results') ? $('show-question-results').checked : false;
   const showCorrectAnswersForIncorrect = $('show-correct-answers') ? $('show-correct-answers').checked : false;
+  const webhookSettingsForQuiz = draftQuizWebhookSettings
+    ? normalizeWebhookSettings(draftQuizWebhookSettings)
+    : null;
   const blocks = Array.from(document.querySelectorAll('.question-block'));
   const { questions, errors } = collectAndValidateQuestions(blocks);
   if (!title) {
@@ -1840,19 +2106,22 @@ const saveQuizBtn = $('save-quiz'); if (saveQuizBtn) saveQuizBtn.addEventListene
   const originalText = saveQuizBtn.textContent;
   saveQuizBtn.textContent = editingId ? 'Updating...' : 'Saving...';
   let nextButtonText = 'Save Quiz';
+  const wasEditing = !!editingId;
   if (editingId) {
-    const res = await api('/api/quizzes/' + editingId, { method: 'PUT', body: JSON.stringify({ title, questions, description: desc, difficulty, tags, partialCreditEnabled, requireLogin, showQuestionResults, showCorrectAnswersForIncorrect }) });
+    const res = await api('/api/quizzes/' + editingId, { method: 'PUT', body: JSON.stringify({ title, questions, description: desc, difficulty, tags, partialCreditEnabled, requireLogin, showQuestionResults, showCorrectAnswersForIncorrect, webhooks: webhookSettingsForQuiz }) });
     if (res && res.error) {
       alert(res.error);
       saveQuizBtn.disabled = false;
       saveQuizBtn.textContent = originalText;
       return;
     }
-    editingId = null;
-    const ei = $('edit-indicator'); if (ei) ei.classList.add('hidden');
-    nextButtonText = 'Save Quiz';
+    saveQuizBtn.disabled = false;
+    saveQuizBtn.textContent = originalText;
+    refreshQuizList();
+    alert('Quiz updated.');
+    return;
   } else {
-    const res = await api('/api/quizzes', { method: 'POST', body: JSON.stringify({ title, questions, description: desc, difficulty, tags, partialCreditEnabled, requireLogin, showQuestionResults, showCorrectAnswersForIncorrect }) });
+    const res = await api('/api/quizzes', { method: 'POST', body: JSON.stringify({ title, questions, description: desc, difficulty, tags, partialCreditEnabled, requireLogin, showQuestionResults, showCorrectAnswersForIncorrect, webhooks: webhookSettingsForQuiz }) });
     if (res && res.error) {
       alert(res.error);
       saveQuizBtn.disabled = false;
@@ -1868,12 +2137,13 @@ const saveQuizBtn = $('save-quiz'); if (saveQuizBtn) saveQuizBtn.addEventListene
   if ($('require-login')) $('require-login').checked = false;
   if ($('show-question-results')) $('show-question-results').checked = false;
   if ($('show-correct-answers')) $('show-correct-answers').checked = false;
+  if (!wasEditing) draftQuizWebhookSettings = null;
   document.getElementById('questions').innerHTML = '';
   addQuestionBlock();
   saveQuizBtn.disabled = false;
   saveQuizBtn.textContent = nextButtonText;
   refreshQuizList();
-  window.location.reload();
+  if (!wasEditing) window.location.reload();
 });
 
 // init
@@ -1886,6 +2156,23 @@ const loginBtn = $('login'); if (loginBtn) loginBtn.addEventListener('click', lo
 const forgotPasswordOpenBtn = $('forgot-password-open'); if (forgotPasswordOpenBtn) forgotPasswordOpenBtn.addEventListener('click', forgotPassword);
 const logoutBtn = $('logout'); if (logoutBtn) logoutBtn.addEventListener('click', logout);
 const resetPasswordOpenBtn = $('reset-password-open'); if (resetPasswordOpenBtn) resetPasswordOpenBtn.addEventListener('click', resetPassword);
+const webhookSettingsOpenBtn = $('webhook-settings-open'); if (webhookSettingsOpenBtn) webhookSettingsOpenBtn.addEventListener('click', async () => {
+  const currentUser = getCurrentUser();
+  if (!currentUser || !currentUser.id) {
+    alert('Please log in to configure webhooks.');
+    return;
+  }
+  const initialSettings = draftQuizWebhookSettings
+    ? normalizeWebhookSettings(draftQuizWebhookSettings)
+    : await readUserWebhookSettings(currentUser.id, { force: true });
+  openWebhookSettingsOverlay('editor', {
+    mode: 'quiz',
+    initialSettings,
+    onSave: saved => {
+      draftQuizWebhookSettings = normalizeWebhookSettings(saved || {});
+    }
+  });
+});
 
 // search
 const searchBtn = $('search-btn'); if (searchBtn) searchBtn.addEventListener('click', () => refreshQuizList());
@@ -1986,6 +2273,7 @@ async function initProfilePage() {
   const discordSaveBtn = $('settings-discord-save');
   const discordUnlinkBtn = $('settings-discord-unlink');
   const discordStatusEl = $('settings-discord-status');
+  const settingsWebhookOpenBtn = $('settings-webhook-open');
 
   function toggleOpenAiSettings() {
     if (!aiProviderEl || !openAiWrapEl) return;
@@ -2092,6 +2380,10 @@ async function initProfilePage() {
         }
       });
     }
+
+    if (settingsWebhookOpenBtn) {
+      settingsWebhookOpenBtn.addEventListener('click', () => openWebhookSettingsOverlay('profile', { mode: 'profile' }));
+    }
   }
 
   if (settingsStatusEl && !isOwnProfile) {
@@ -2102,6 +2394,9 @@ async function initProfilePage() {
   }
   if (discordStatusEl && isOwnProfile && discordLinkedFlag === '1') {
     discordStatusEl.textContent = 'Discord account linked via OAuth2.';
+  }
+  if (settingsWebhookOpenBtn && !isOwnProfile) {
+    settingsWebhookOpenBtn.classList.add('hidden');
   }
 
   const adminDeleteBtn = $('admin-delete-user');
@@ -2288,6 +2583,7 @@ async function initEditPage() {
     e.preventDefault();
     // clear form for new quiz
     editingId = null;
+    draftQuizWebhookSettings = null;
     const ei = $('edit-indicator'); if (ei) ei.classList.add('hidden');
     const title = $('quiz-title'); if (title) title.value = '';
     const desc = $('quiz-description'); if (desc) desc.value = '';
