@@ -579,6 +579,49 @@ function escapeXml(value) {
     .replace(/'/g, '&apos;');
 }
 
+function slugifySegment(value) {
+  return String(value == null ? '' : value)
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80);
+}
+
+function getQuizSlug(quiz) {
+  const explicitSlug = String(quiz && quiz.slug ? quiz.slug : '').trim();
+  if (explicitSlug) return explicitSlug;
+  const id = String(quiz && quiz.id ? quiz.id : '').trim();
+  const titlePart = slugifySegment(quiz && quiz.title ? quiz.title : 'quiz');
+  if (titlePart) return titlePart;
+  return id || 'quiz';
+}
+
+function getQuizSeoPath(quiz) {
+  return `/quiz/${encodeURIComponent(getQuizSlug(quiz))}`;
+}
+
+function findQuizBySlug(data, slugParam) {
+  const rawSlug = String(slugParam || '').trim();
+  if (!rawSlug) return null;
+
+  const byId = data.find(item => item && item.id === rawSlug);
+  if (byId) return byId;
+
+  return data.find(item => item && getQuizSlug(item) === rawSlug) || null;
+}
+
+function isQuizLowContent(quiz) {
+  const description = String(quiz && quiz.description ? quiz.description : '').trim();
+  const questionCount = Array.isArray(quiz && quiz.questions) ? quiz.questions.length : 0;
+  return !description || questionCount === 0;
+}
+
+function safeJsonForScript(value) {
+  return JSON.stringify(value).replace(/</g, '\\u003c');
+}
+
 async function getDiscordClient() {
   if (!DISCORD_BOT_TOKEN) return null;
   if (!discordClientPromise) {
@@ -681,6 +724,108 @@ async function addUserToDiscordServer(discordUserId, userAccessToken) {
   }
 }
 
+async function buildQuizSeoModel(req, quiz) {
+  const ratings = await readRatings();
+  const users = await readUsers();
+  const quizRatings = ratings.filter(r => r.quizId === quiz.id);
+  const avgRating = quizRatings.length
+    ? Math.round((quizRatings.reduce((sum, r) => sum + (Number(r.rating) || 0), 0) / quizRatings.length) * 10) / 10
+    : null;
+
+  const ownerUser = users.find(u => u && u.id === quiz.owner);
+  const ownerName = ownerUser ? ownerUser.username : (quiz.owner || 'Unknown');
+  const questionCount = Array.isArray(quiz.questions) ? quiz.questions.length : 0;
+  const shortDescriptionSource = String(quiz.description || '').replace(/\s+/g, ' ').trim();
+
+  const infoParts = [`${questionCount} question${questionCount === 1 ? '' : 's'}`];
+  if (avgRating != null) infoParts.push(`${avgRating}/5 rating`);
+  if (ownerName) infoParts.push(`by ${ownerName}`);
+
+  const fallbackDescription = `Take this quiz: ${String(quiz.title || 'Quiz')} • ${infoParts.join(' • ')}`;
+  const description = (shortDescriptionSource || fallbackDescription).slice(0, 280);
+  const seoTitle = `${String(quiz.title || 'Quiz')} | Quiz Maker`;
+  const baseUrl = getPublicBaseUrl(req);
+  const canonicalPath = getQuizSeoPath(quiz);
+  const canonicalUrl = `${baseUrl}${canonicalPath}`;
+  const playPath = `/take.html?quiz=${encodeURIComponent(quiz.id)}`;
+  const playUrl = `${baseUrl}${playPath}`;
+  const imageUrl = quiz.owner
+    ? `${baseUrl}/avatars/${encodeURIComponent(quiz.owner)}`
+    : `${baseUrl}/default-avatar.png`;
+  const shouldNoindex = isQuizLowContent(quiz);
+  const studyGuideSignal = [quiz.title, quiz.description, Array.isArray(quiz.tags) ? quiz.tags.join(' ') : '']
+    .map(value => String(value || '').toLowerCase())
+    .join(' ')
+    .includes('study guide');
+  const educationalUse = studyGuideSignal ? 'study guide' : 'self-assessment';
+
+  const schema = {
+    '@context': 'https://schema.org',
+    '@type': 'Quiz',
+    name: String(quiz.title || 'Quiz'),
+    description,
+    url: canonicalUrl,
+    educationalUse,
+    interactivityType: 'active',
+    educationalLevel: String(quiz.difficulty || 'medium'),
+    creator: {
+      '@type': 'Person',
+      name: ownerName || 'Unknown'
+    },
+    numberOfQuestions: questionCount,
+    aggregateRating: avgRating != null
+      ? {
+        '@type': 'AggregateRating',
+        ratingValue: avgRating,
+        ratingCount: quizRatings.length,
+        bestRating: 5,
+        worstRating: 1
+      }
+      : undefined
+  };
+
+  return {
+    seoTitle,
+    description,
+    canonicalPath,
+    canonicalUrl,
+    playPath,
+    playUrl,
+    imageUrl,
+    shouldNoindex,
+    schema
+  };
+}
+
+function renderQuizSeoHtml(model) {
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>${escapeHtml(model.seoTitle)}</title>
+  <meta name="description" content="${escapeHtml(model.description)}" />
+  <meta name="robots" content="${model.shouldNoindex ? 'noindex,nofollow' : 'index,follow'}" />
+  <link rel="canonical" href="${escapeHtml(model.canonicalUrl)}" />
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="${escapeHtml(model.seoTitle)}" />
+  <meta property="og:description" content="${escapeHtml(model.description)}" />
+  <meta property="og:url" content="${escapeHtml(model.canonicalUrl)}" />
+  <meta property="og:image" content="${escapeHtml(model.imageUrl)}" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="${escapeHtml(model.seoTitle)}" />
+  <meta name="twitter:description" content="${escapeHtml(model.description)}" />
+  <meta name="twitter:image" content="${escapeHtml(model.imageUrl)}" />
+  <script type="application/ld+json">${safeJsonForScript(model.schema)}</script>
+</head>
+<body>
+  <p>Opening quiz...</p>
+  <p><a href="${escapeHtml(model.playPath)}">Continue to quiz</a></p>
+  <script>window.location.replace(${JSON.stringify(model.playPath)});</script>
+</body>
+</html>`;
+}
+
 app.get('/sitemap.xml', async (req, res) => {
   const baseUrl = getPublicBaseUrl(req);
   const corePaths = ['/', '/create.html', '/login.html', '/profile.html', '/edit.html'];
@@ -688,7 +833,7 @@ app.get('/sitemap.xml', async (req, res) => {
   const data = await readData();
   const quizPaths = data
     .filter(q => q && q.id)
-    .map(q => '/share/' + encodeURIComponent(q.id));
+    .map(q => getQuizSeoPath(q));
   const takeQuizPaths = data
     .filter(q => q && q.id)
     .map(q => '/take.html?quiz=' + encodeURIComponent(q.id));
@@ -711,62 +856,27 @@ app.get('/sitemap.xml', async (req, res) => {
   res.type('application/xml').send(xml);
 });
 
+app.get('/quiz/:slug', async (req, res) => {
+  const data = await readData();
+  const quiz = findQuizBySlug(data, req.params.slug);
+  if (!quiz) return res.status(404).send('Quiz not found');
+
+  const canonicalPath = getQuizSeoPath(quiz);
+  const requestedPath = `/quiz/${encodeURIComponent(String(req.params.slug || ''))}`;
+  if (requestedPath !== canonicalPath) {
+    res.redirect(301, canonicalPath);
+    return;
+  }
+
+  const seoModel = await buildQuizSeoModel(req, quiz);
+  res.type('html').send(renderQuizSeoHtml(seoModel));
+});
+
 app.get('/share/:id', async (req, res) => {
   const data = await readData();
   const quiz = data.find(item => item.id === req.params.id);
   if (!quiz) return res.status(404).send('Quiz not found');
-
-  const ratings = await readRatings();
-  const users = await readUsers();
-
-  const quizRatings = ratings.filter(r => r.quizId === quiz.id);
-  const avgRating = quizRatings.length
-    ? Math.round((quizRatings.reduce((sum, r) => sum + (Number(r.rating) || 0), 0) / quizRatings.length) * 10) / 10
-    : null;
-
-  const ownerUser = users.find(u => u && u.id === quiz.owner);
-  const ownerName = ownerUser ? ownerUser.username : (quiz.owner || 'Unknown');
-  const questionCount = Array.isArray(quiz.questions) ? quiz.questions.length : 0;
-  const infoParts = [`${questionCount} question${questionCount === 1 ? '' : 's'}`];
-  if (avgRating != null) infoParts.push(`${avgRating}/5 rating`);
-  if (ownerName) infoParts.push(`by ${ownerName}`);
-
-  const shortDescriptionSource = String(quiz.description || '').replace(/\s+/g, ' ').trim();
-  const fallbackDescription = `Play this quiz • ${infoParts.join(' • ')}`;
-  const description = (shortDescriptionSource || fallbackDescription).slice(0, 280);
-
-  const baseUrl = getPublicBaseUrl(req);
-  const sharePath = `/share/${encodeURIComponent(quiz.id)}`;
-  const playPath = `/take.html?quiz=${encodeURIComponent(quiz.id)}`;
-  const shareUrl = `${baseUrl}${sharePath}`;
-  const imageUrl = quiz.owner
-    ? `${baseUrl}/avatars/${encodeURIComponent(quiz.owner)}`
-    : `${baseUrl}/default-avatar.png`;
-
-  const title = `🧠 ${String(quiz.title || 'Quiz')}`;
-
-  res.type('html').send(`<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>${escapeHtml(title)}</title>
-  <meta property="og:type" content="website" />
-  <meta property="og:title" content="${escapeHtml(title)}" />
-  <meta property="og:description" content="${escapeHtml(description)}" />
-  <meta property="og:url" content="${escapeHtml(shareUrl)}" />
-  <meta property="og:image" content="${escapeHtml(imageUrl)}" />
-  <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="${escapeHtml(title)}" />
-  <meta name="twitter:description" content="${escapeHtml(description)}" />
-  <meta name="twitter:image" content="${escapeHtml(imageUrl)}" />
-</head>
-<body>
-  <p>Opening quiz…</p>
-  <p><a href="${escapeHtml(playPath)}">Continue to quiz</a></p>
-  <script>window.location.replace(${JSON.stringify(playPath)});</script>
-</body>
-</html>`);
+  res.redirect(301, getQuizSeoPath(quiz));
 });
 
 app.get('/api/quizzes', async (req, res) => {
@@ -801,6 +911,7 @@ app.get('/api/quizzes', async (req, res) => {
     return {
       id: item.id,
       title: item.title,
+      seoPath: getQuizSeoPath(item),
       owner: item.owner || null,
       description: item.description || '',
       averageRating: avg,
@@ -833,6 +944,7 @@ app.get('/api/quizzes/:id', async (req, res) => {
   const computedScore = (ratingForScore * 2) + (averageQuizScoreForScore * 10) + Math.log10(submissions + 1);
   const score = Math.round(computedScore * 100) / 100;
   res.json(Object.assign({}, sanitizeQuizForPublic(q), {
+    seoPath: getQuizSeoPath(q),
     averageRating: avg,
     ratingsCount: itemRatings.length,
     averageScore: avgScore,
@@ -857,6 +969,8 @@ app.post('/api/quizzes', async (req, res) => {
   if (!authUser) return res.status(401).json({ error: 'Unauthorized' });
   const { title, questions, description, difficulty, tags, partialCreditEnabled, requireLogin, showQuestionResults, showCorrectAnswersForIncorrect, webhooks } = req.body;
   if (!title || !Array.isArray(questions)) return res.status(400).json({ error: 'Invalid payload' });
+  const normalizedDescription = String(description || '').trim();
+  if (!normalizedDescription) return res.status(400).json({ error: 'Quiz description is required.' });
   const normalizedDifficulty = ['easy', 'medium', 'hard'].includes(String(difficulty || '').toLowerCase())
     ? String(difficulty).toLowerCase()
     : 'medium';
@@ -872,7 +986,7 @@ app.post('/api/quizzes', async (req, res) => {
     title,
     questions,
     owner: authUser.id,
-    description: description || '',
+    description: normalizedDescription,
     difficulty: normalizedDifficulty,
     tags: normalizedTags,
     partialCreditEnabled: partialCreditEnabled !== false,
@@ -902,6 +1016,8 @@ app.put('/api/quizzes/:id', async (req, res) => {
   if (!authUser) return res.status(401).json({ error: 'Unauthorized' });
   const { title, questions, description, difficulty, tags, partialCreditEnabled, requireLogin, showQuestionResults, showCorrectAnswersForIncorrect, webhooks } = req.body;
   if (!title || !Array.isArray(questions)) return res.status(400).json({ error: 'Invalid payload' });
+  const normalizedDescription = String(description || '').trim();
+  if (!normalizedDescription) return res.status(400).json({ error: 'Quiz description is required.' });
   const normalizedDifficulty = ['easy', 'medium', 'hard'].includes(String(difficulty || '').toLowerCase())
     ? String(difficulty).toLowerCase()
     : 'medium';
@@ -918,7 +1034,7 @@ app.put('/api/quizzes/:id', async (req, res) => {
   data[idx].title = title;
   data[idx].questions = questions;
   data[idx].owner = data[idx].owner || authUser.id;
-  data[idx].description = description || data[idx].description || '';
+  data[idx].description = normalizedDescription;
   data[idx].difficulty = normalizedDifficulty;
   data[idx].tags = normalizedTags;
   data[idx].partialCreditEnabled = partialCreditEnabled !== false;
@@ -1697,6 +1813,7 @@ app.get('/api/users/:id/quizzes', async (req, res) => {
   res.json(userQuizzes.map(q => ({
     id: q.id,
     title: q.title,
+    seoPath: getQuizSeoPath(q),
     owner: q.owner || null,
     description: q.description || ''
   })));

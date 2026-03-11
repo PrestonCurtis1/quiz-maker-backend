@@ -23,6 +23,100 @@ function el(tag, attrs = {}, children = []) {
   return e;
 }
 
+function getQuizPublicPath(quiz) {
+  if (quiz && typeof quiz.seoPath === 'string' && quiz.seoPath.trim()) return quiz.seoPath;
+  return '/share/' + encodeURIComponent(quiz && quiz.id ? quiz.id : '');
+}
+
+function upsertMetaTag(attrName, attrValue, content) {
+  if (!attrName || !attrValue) return;
+  let node = document.head.querySelector(`meta[${attrName}="${attrValue}"]`);
+  if (!node) {
+    node = document.createElement('meta');
+    node.setAttribute(attrName, attrValue);
+    document.head.appendChild(node);
+  }
+  node.setAttribute('content', String(content == null ? '' : content));
+}
+
+function upsertCanonicalLink(href) {
+  let node = document.head.querySelector('link[rel="canonical"]');
+  if (!node) {
+    node = document.createElement('link');
+    node.setAttribute('rel', 'canonical');
+    document.head.appendChild(node);
+  }
+  node.setAttribute('href', href);
+}
+
+function upsertJsonLdSchema(schemaObject) {
+  const scriptId = 'quiz-jsonld-schema';
+  let node = document.getElementById(scriptId);
+  if (!node) {
+    node = document.createElement('script');
+    node.type = 'application/ld+json';
+    node.id = scriptId;
+    document.head.appendChild(node);
+  }
+  node.textContent = JSON.stringify(schemaObject).replace(/</g, '\\u003c');
+}
+
+function applyQuizSeoToHead(quiz) {
+  if (!quiz || !quiz.id) return;
+  const questionCount = Array.isArray(quiz.questions) ? quiz.questions.length : 0;
+  const title = `${quiz.title || 'Quiz'} | Quiz Maker`;
+  const descriptionSource = String(quiz.description || '').trim();
+  const description = (descriptionSource || `Take this quiz: ${quiz.title || 'Quiz'} (${questionCount} questions)`).slice(0, 280);
+  const pagePath = getQuizPublicPath(quiz);
+  const pageUrl = window.location.origin + pagePath;
+  const imageUrl = quiz.owner
+    ? `${window.location.origin}/avatars/${encodeURIComponent(quiz.owner)}`
+    : `${window.location.origin}/default-avatar.png`;
+  const shouldNoindex = !descriptionSource || questionCount === 0;
+  const studyGuideSignal = [quiz.title, quiz.description, Array.isArray(quiz.tags) ? quiz.tags.join(' ') : '']
+    .map(value => String(value || '').toLowerCase())
+    .join(' ')
+    .includes('study guide');
+
+  document.title = title;
+  upsertMetaTag('name', 'description', description);
+  upsertMetaTag('name', 'robots', shouldNoindex ? 'noindex,nofollow' : 'index,follow');
+  upsertMetaTag('property', 'og:type', 'website');
+  upsertMetaTag('property', 'og:title', title);
+  upsertMetaTag('property', 'og:description', description);
+  upsertMetaTag('property', 'og:url', pageUrl);
+  upsertMetaTag('property', 'og:image', imageUrl);
+  upsertMetaTag('name', 'twitter:card', 'summary_large_image');
+  upsertMetaTag('name', 'twitter:title', title);
+  upsertMetaTag('name', 'twitter:description', description);
+  upsertMetaTag('name', 'twitter:image', imageUrl);
+  upsertCanonicalLink(pageUrl);
+
+  upsertJsonLdSchema({
+    '@context': 'https://schema.org',
+    '@type': 'Quiz',
+    name: String(quiz.title || 'Quiz'),
+    description,
+    url: pageUrl,
+    educationalUse: studyGuideSignal ? 'study guide' : 'self-assessment',
+    interactivityType: 'active',
+    educationalLevel: String(quiz.difficulty || 'medium'),
+    creator: {
+      '@type': 'Person',
+      name: String(quiz.owner || 'Unknown')
+    },
+    numberOfQuestions: questionCount,
+    aggregateRating: quiz.averageRating != null
+      ? {
+        '@type': 'AggregateRating',
+        ratingValue: Number(quiz.averageRating),
+        bestRating: 5,
+        worstRating: 1
+      }
+      : undefined
+  });
+}
+
 function normalizeTags(values) {
   if (!Array.isArray(values)) return [];
   const seen = new Set();
@@ -644,7 +738,27 @@ function initAiQuizGenerator() {
   });
 }
 
-async function refreshQuizList() {
+const QUIZ_LIST_PAGE_SIZE = 10;
+let quizListPage = 1;
+
+function updateQuizPagination(totalCount) {
+  const prevBtn = $('quiz-prev-page');
+  const nextBtn = $('quiz-next-page');
+  const info = $('quiz-page-info');
+  const totalPages = Math.max(1, Math.ceil(totalCount / QUIZ_LIST_PAGE_SIZE));
+  if (quizListPage > totalPages) quizListPage = totalPages;
+  if (quizListPage < 1) quizListPage = 1;
+
+  if (info) info.textContent = `Page ${quizListPage} of ${totalPages}`;
+  if (prevBtn) prevBtn.disabled = quizListPage <= 1;
+  if (nextBtn) nextBtn.disabled = quizListPage >= totalPages;
+
+  return totalPages;
+}
+
+async function refreshQuizList(options = {}) {
+  const resetPage = !!options.resetPage;
+  if (resetPage) quizListPage = 1;
   const searchInput = $('search');
   const sortByEl = $('sort-by');
   const orderByEl = $('order-by');
@@ -715,9 +829,13 @@ async function refreshQuizList() {
     return orderBy === 'asc' ? (aNum - bNum) : (bNum - aNum);
   });
 
-  filtered.forEach(q => {
+  updateQuizPagination(filtered.length);
+  const startIndex = (quizListPage - 1) * QUIZ_LIST_PAGE_SIZE;
+  const pageItems = filtered.slice(startIndex, startIndex + QUIZ_LIST_PAGE_SIZE);
+
+  pageItems.forEach(q => {
     const li = el('li');
-    const btn = el('button', { type: 'button', onclick: () => { window.location.href = '/share/' + encodeURIComponent(q.id); } }, [ q.title ]);
+    const btn = el('button', { type: 'button', onclick: () => { window.location.href = getQuizPublicPath(q); } }, [ q.title ]);
     li.appendChild(btn);
     if (q.owner) {
       const ownerName = userMap[q.owner] || q.owner;
@@ -1426,6 +1544,7 @@ function loadQuiz(id) {
       if (takeDesc) takeDesc.textContent = q && q.error ? q.error : '';
       return;
     }
+    applyQuizSeoToHead(q);
     if (takeTitle) takeTitle.textContent = q.title || 'Untitled Quiz';
     if (takeDifficulty) {
       const difficultyText = q.difficulty ? String(q.difficulty) : 'medium';
@@ -1482,7 +1601,7 @@ function loadQuiz(id) {
 
     if (shareBtn) {
       shareBtn.onclick = async () => {
-        const shareUrl = window.location.origin + '/share/' + encodeURIComponent(q.id);
+        const shareUrl = window.location.origin + getQuizPublicPath(q);
         const shareData = {
           title: q.title || 'Quiz',
           text: 'Try this quiz!',
@@ -2175,12 +2294,14 @@ const webhookSettingsOpenBtn = $('webhook-settings-open'); if (webhookSettingsOp
 });
 
 // search
-const searchBtn = $('search-btn'); if (searchBtn) searchBtn.addEventListener('click', () => refreshQuizList());
-const sortBySelect = $('sort-by'); if (sortBySelect) sortBySelect.addEventListener('change', () => refreshQuizList());
-const orderBySelect = $('order-by'); if (orderBySelect) orderBySelect.addEventListener('change', () => refreshQuizList());
-const filterUserSelect = $('filter-user'); if (filterUserSelect) filterUserSelect.addEventListener('change', () => refreshQuizList());
-const filterDifficultySelect = $('filter-difficulty'); if (filterDifficultySelect) filterDifficultySelect.addEventListener('change', () => refreshQuizList());
-const filterTagsInput = $('filter-tags'); if (filterTagsInput) filterTagsInput.addEventListener('input', () => refreshQuizList());
+const searchBtn = $('search-btn'); if (searchBtn) searchBtn.addEventListener('click', () => refreshQuizList({ resetPage: true }));
+const sortBySelect = $('sort-by'); if (sortBySelect) sortBySelect.addEventListener('change', () => refreshQuizList({ resetPage: true }));
+const orderBySelect = $('order-by'); if (orderBySelect) orderBySelect.addEventListener('change', () => refreshQuizList({ resetPage: true }));
+const filterUserSelect = $('filter-user'); if (filterUserSelect) filterUserSelect.addEventListener('change', () => refreshQuizList({ resetPage: true }));
+const filterDifficultySelect = $('filter-difficulty'); if (filterDifficultySelect) filterDifficultySelect.addEventListener('change', () => refreshQuizList({ resetPage: true }));
+const filterTagsInput = $('filter-tags'); if (filterTagsInput) filterTagsInput.addEventListener('input', () => refreshQuizList({ resetPage: true }));
+const prevPageBtn = $('quiz-prev-page'); if (prevPageBtn) prevPageBtn.addEventListener('click', () => { quizListPage -= 1; refreshQuizList(); });
+const nextPageBtn = $('quiz-next-page'); if (nextPageBtn) nextPageBtn.addEventListener('click', () => { quizListPage += 1; refreshQuizList(); });
 
 const jsonQuizFile = $('json-quiz-file');
 const jsonLoadBtn = $('json-load-btn');
@@ -2485,7 +2606,7 @@ async function initProfilePage() {
     const quizList = Array.isArray(quizzes) ? quizzes : [];
     quizList.forEach(q => {
       const li = el('li');
-      const a = el('a', { href: '/share/' + encodeURIComponent(q.id) }, [ q.title ]);
+      const a = el('a', { href: getQuizPublicPath(q) }, [ q.title ]);
       li.appendChild(a);
       // if viewing own profile, show edit button for each quiz
       if (cur && cur.id === userId) {
