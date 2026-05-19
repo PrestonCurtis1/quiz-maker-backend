@@ -92,4 +92,4 @@ This route automatically handles Open Graph metadata to ensure your quizzes look
 
 * **Keep Secrets Private:** Never commit your `.pem` files or any `.env` files containing sensitive data to version control. Ensure they are listed in your `.gitignore`.
 * **Sanitization:** Always sanitize user-provided inputs if you expand the quiz generation logic to prevent injection vulnerabilities.
-* 
+* **Don't send**: don't send your feet pics with to random ppl
