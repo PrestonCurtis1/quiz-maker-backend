@@ -358,7 +358,7 @@ function validateQuestionDraft(draft, questionNumber) {
     if (draft.pairs.length === 0) errors.push(`Question ${questionNumber}: add at least one pair.`);
     const incomplete = draft.pairs.find(p => !p.left || !p.right);
     if (incomplete) errors.push(`Question ${questionNumber}: each pair must include both left and right values.`);
-  } else if (draft.type === 'text') {
+  } else if (draft.type === 'text' || draft.type === 'file') {
     if (!draft.answers || draft.answers.length === 0) errors.push(`Question ${questionNumber}: add at least one correct answer.`);
   } else if (draft.type === 'number') {
     if (!draft.answers || draft.answers.length === 0) {
@@ -385,6 +385,9 @@ function draftToQuestion(draft) {
   if (draft.type === 'number') {
     const values = (draft.answers || []).map(value => parseFloat(value)).filter(value => Number.isFinite(value));
     return { type: 'number', text: draft.text, description: draft.description, answer: values.length === 1 ? values[0] : values };
+  }
+  if (draft.type === 'file') {
+    return { type: 'file', text: draft.text, description: draft.description, answer: draft.answers.length === 1 ? draft.answers[0] : draft.answers };
   }
   return { type: 'multiple', text: draft.text, description: draft.description, options: draft.options, correct: draft.correct };
 }
@@ -441,7 +444,7 @@ function makeQuestionBlock(index, initialData = null) {
   const qInput = el('input', { placeholder: 'Question text', class: 'q-text' });
   const qDesc = el('textarea', { placeholder: 'Question description (Markdown supported)', class: 'q-desc' });
   const typeSelect = el('select', { class: 'q-type' });
-  ['multiple','multi','matching','text','number'].forEach(t => {
+  ['multiple','multi','matching','text','number', 'file'].forEach(t => {
     const opt = document.createElement('option');
     opt.value = t;
     opt.textContent = t === 'multiple'
@@ -452,6 +455,8 @@ function makeQuestionBlock(index, initialData = null) {
           ? 'Match terms'
           : t === 'number'
             ? 'Number answer'
+            : t === 'file'
+            ? 'File Upload'
             : 'Text answer';
     typeSelect.appendChild(opt);
   });
@@ -471,6 +476,7 @@ function makeQuestionBlock(index, initialData = null) {
   const matchingHelp = el('div', { class: 'q-help' }, [ 'Tip: add each pair using Left and Right fields below.' ]);
   const textHelp = el('div', { class: 'q-help' }, [ 'Tip: add one or more accepted answers.' ]);
   const numberHelp = el('div', { class: 'q-help' }, [ 'Tip: add one or more accepted numeric answers.' ]);
+  const fileHelp = el('div', { class: 'q-help' }, [ 'Tip: add one or more accepted answers, and Local AI will process uploaded files to ensure they match the provided description.' ]);
 
   container.appendChild(header);
   container.appendChild(qInput);
@@ -489,6 +495,7 @@ function makeQuestionBlock(index, initialData = null) {
   answerBuilder.appendChild(addAnswerBtn);
   container.appendChild(textHelp);
   container.appendChild(numberHelp);
+  container.appendChild(fileHelp);
   container.appendChild(answerBuilder);
 
   const choiceGroupName = 'correct-choice-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -625,10 +632,11 @@ function makeQuestionBlock(index, initialData = null) {
     matchingHelp.style.display = t === 'matching' ? '' : 'none';
     textHelp.style.display = t === 'text' ? '' : 'none';
     numberHelp.style.display = t === 'number' ? '' : 'none';
-    answerBuilder.style.display = (t === 'text' || t === 'number') ? '' : 'none';
+    fileHelp.style.display = t === 'file' ? '' : 'none';
+    answerBuilder.style.display = (t === 'text' || t === 'number' || t === 'file') ? '' : 'none';
     if ((t === 'multiple' || t === 'multi') && optionsList.children.length === 0) addOptionRow();
     if (t === 'matching' && pairsList.children.length === 0) addPairRow();
-    if ((t === 'text' || t === 'number') && answersList.children.length === 0) addAnswerRow();
+    if ((t === 'text' || t === 'number' || t === 'file') && answersList.children.length === 0) addAnswerRow();
     renderCorrectChoices();
   }
   typeSelect.addEventListener('change', updateVisibility);
@@ -642,7 +650,7 @@ function makeQuestionBlock(index, initialData = null) {
     } else if (initialData.type === 'multi') {
       (initialData.options || []).forEach(opt => addOptionRow(opt));
       initialCorrectMulti = Array.isArray(initialData.correct) ? initialData.correct.slice() : [];
-    } else if (initialData.type === 'text' || initialData.type === 'number') {
+    } else if (initialData.type === 'text' || initialData.type === 'number' || initialData.type === 'file') {
       const initialAnswers = Array.isArray(initialData.answer) ? initialData.answer : [initialData.answer || ''];
       initialAnswers.filter(Boolean).forEach(ans => addAnswerRow(ans));
     } else {
@@ -681,7 +689,7 @@ function applyQuizToEditor(quiz) {
   if (desc) desc.value = quiz.description || '';
   if (difficulty) {
     const normalizedDifficulty = String(quiz.difficulty || '').toLowerCase();
-    difficulty.value = ['easy', 'medium', 'hard'].includes(normalizedDifficulty) ? normalizedDifficulty : 'medium';
+    difficulty.value = ['easy', 'medium', 'hard', 'impossible'].includes(normalizedDifficulty) ? normalizedDifficulty : 'medium';
   }
   const list = Array.isArray(quiz.tags)
     ? quiz.tags.map(tag => String(tag || '').trim()).filter(Boolean)
@@ -718,7 +726,7 @@ function normalizeImportedQuiz(quiz) {
   return {
     title: (base.title || 'Imported Quiz').toString(),
     description: base.description || '',
-    difficulty: ['easy', 'medium', 'hard'].includes(normalizedDifficulty) ? normalizedDifficulty : 'medium',
+    difficulty: ['easy', 'medium', 'hard', 'impossible'].includes(normalizedDifficulty) ? normalizedDifficulty : 'medium',
     tags: normalizedTags,
     partialCreditEnabled: base.partialCreditEnabled !== false,
     requireLogin: !!base.requireLogin,
@@ -805,7 +813,7 @@ async function refreshQuizList(options = {}) {
     if (selectedUser !== 'all' && item.owner !== selectedUser) return false;
 
     const rawDifficulty = String(item.difficulty || '').toLowerCase();
-    const quizDifficulty = ['easy', 'medium', 'hard'].includes(rawDifficulty) ? rawDifficulty : 'medium';
+    const quizDifficulty = ['easy', 'medium', 'hard', 'impossible'].includes(rawDifficulty) ? rawDifficulty : 'medium';
     if (selectedDifficulty !== 'all' && quizDifficulty !== selectedDifficulty) return false;
 
     if (tagNeedles.length) {
@@ -1480,7 +1488,7 @@ async function editQuiz(id) {
   const descEl = $('quiz-description'); if (descEl) descEl.value = q.description || '';
   const difficultyEl = $('quiz-difficulty'); if (difficultyEl) {
     const normalizedDifficulty = String(q.difficulty || '').toLowerCase();
-    difficultyEl.value = ['easy', 'medium', 'hard'].includes(normalizedDifficulty) ? normalizedDifficulty : 'medium';
+    difficultyEl.value = ['easy', 'medium', 'hard', 'impossible'].includes(normalizedDifficulty) ? normalizedDifficulty : 'medium';
   }
   const tagsList = Array.isArray(q.tags) ? q.tags.map(tag => String(tag || '').trim()).filter(Boolean) : [];
   renderEditorTags(tagsList);
@@ -1725,6 +1733,12 @@ function loadQuiz(id) {
           return answerValue ? 'True' : 'False';
         }
 
+        if (type === 'file') {
+          answerValue = typeof answerValue === 'string' ? answerValue.replace(/data:.*;base64,/, "") : '';
+          const fileSize = answerValue.length * (6/8) - answerValue.replaceAll(/[^=]/g, '').length;
+          return `<a href="data:application/octet-stream;base64,${answerValue}">file</a> (${fileSize} bytes)`
+        }
+
         if (answerValue == null) return '(no answer)';
         if (Array.isArray(answerValue)) return answerValue.join(', ');
         return String(answerValue);
@@ -1834,7 +1848,7 @@ function loadQuiz(id) {
           return pairs.map(pair => `${pair.left} → ${pair.right}`).join(' | ');
         }
 
-        if (type === 'text' || type === 'fill') {
+        if (type === 'text' || type === 'fill' || type === 'file') {
           const expected = Array.isArray(question.answer) ? question.answer : [question.answer];
           const cleaned = expected.map(value => String(value == null ? '' : value).trim()).filter(Boolean);
           return cleaned.length ? cleaned.join(', ') : '(not set)';
@@ -1902,16 +1916,21 @@ function loadQuiz(id) {
         }
 
         const answers = Array.isArray(resultRes.answers) ? resultRes.answers : [];
+        const correctFileQuestions = Array.isArray(resultRes.correctFileQuestions) ? resultRes.correctFileQuestions : [];
         const list = el('ol');
 
         answerKeyQuestions.forEach((question, qi) => {
           const item = el('li');
           const questionLine = el('div');
           questionLine.innerHTML = renderQuestionText(question.text || `Question ${qi + 1}`);
-          const correctness = isSubmittedAnswerCorrect(question, answers[qi]);
+          const correctness = isSubmittedAnswerCorrect(question, answers[qi]) || correctFileQuestions.includes(qi);
           const statusLine = el('div', {}, [ correctness ? '✅ Correct' : '❌ Incorrect' ]);
           const answerLine = el('div');
-          answerLine.innerHTML = renderQuestionText('Answer: ' + formatSubmittedAnswer(question, answers[qi]));
+          if (question && question.type && question.type === 'file') {
+            answerLine.innerHTML = 'Answer: ' + formatSubmittedAnswer(question, answers[qi]);
+          } else {
+            answerLine.innerHTML = renderQuestionText('Answer: ' + formatSubmittedAnswer(question, answers[qi]));
+          }
           item.appendChild(statusLine);
           item.appendChild(questionLine);
           item.appendChild(answerLine);
@@ -2080,6 +2099,31 @@ function loadQuiz(id) {
       } else if (type === 'number') {
         const ni = el('input', { type: 'number', step: 'any', name: 'q' + qi, placeholder: 'Your numeric answer' });
         qdiv.appendChild(ni);
+      } else if (type === 'file') {
+        const fileInput = el('input', { type: 'file', name: 'q' + qi });
+        fileInput.addEventListener('change', async () => {
+          let base64 = "";
+          if (fileInput.files.length >= 1) {
+            const file = fileInput.files[0];
+            if (file.size > 4000) {
+              alert("File must be less than 4KB");
+              fileInput.value = '';
+              return;
+            }
+            const dataURL = await new Promise(resolve => {
+              const reader = new FileReader();
+              reader.onloadend = () => {
+                resolve(reader.result);
+              }
+              reader.readAsDataURL(file);
+            });
+            if (dataURL && typeof dataURL === 'string') {
+              base64 = dataURL;
+            }
+          }
+          fileInput.setAttribute("data-file", base64);
+        });
+        qdiv.appendChild(fileInput);
       }
       form.appendChild(qdiv);
     });
@@ -2109,6 +2153,10 @@ function loadQuiz(id) {
           const raw = ni ? ni.value : '';
           const num = parseFloat(raw);
           answers.push(Number.isFinite(num) ? num : null);
+        } else if (type === 'file') {
+          const fileInput = form.querySelector('input[name="q' + qi + '"]');
+          const base64 = fileInput.getAttribute("data-file") ?? '';
+          answers.push(base64);
         }
       });
       const user = getCurrentUser();
@@ -2195,7 +2243,7 @@ const saveQuizBtn = $('save-quiz'); if (saveQuizBtn) saveQuizBtn.addEventListene
   const desc = document.getElementById('quiz-description') ? document.getElementById('quiz-description').value : '';
   const difficultyRaw = $('quiz-difficulty') ? $('quiz-difficulty').value : 'medium';
   const tags = readEditorTags();
-  const difficulty = ['easy', 'medium', 'hard'].includes(String(difficultyRaw || '').toLowerCase())
+  const difficulty = ['easy', 'medium', 'hard', 'impossible'].includes(String(difficultyRaw || '').toLowerCase())
     ? String(difficultyRaw).toLowerCase()
     : 'medium';
   const partialCreditEnabled = $('partial-credit-enabled') ? $('partial-credit-enabled').checked : true;
@@ -2407,7 +2455,7 @@ async function initProfilePage() {
     aiProviderEl.value = settings.aiProvider === 'openai' ? 'openai' : 'local';
     openAiModelEl.value = settings.openaiModel || 'gpt-4.1-mini';
     openAiKeyEl.value = settings.openaiApiKey || '';
-    defaultDifficultyEl.value = (settings.defaultDifficulty === 'easy' || settings.defaultDifficulty === 'medium' || settings.defaultDifficulty === 'hard')
+    defaultDifficultyEl.value = (settings.defaultDifficulty === 'easy' || settings.defaultDifficulty === 'medium' || settings.defaultDifficulty === 'hard' || settings.defaultDifficulty === 'impossible')
       ? settings.defaultDifficulty
       : 'medium';
     defaultCountEl.value = String(Number.isFinite(parseInt(settings.defaultQuestionCount, 10)) ? parseInt(settings.defaultQuestionCount, 10) : 8);
@@ -2440,7 +2488,7 @@ async function initProfilePage() {
           aiProvider: provider,
           openaiModel,
           openaiApiKey,
-          defaultDifficulty: ['easy', 'medium', 'hard'].includes(defaultDifficulty) ? defaultDifficulty : 'medium',
+          defaultDifficulty: ['easy', 'medium', 'hard', 'impossible'].includes(defaultDifficulty) ? defaultDifficulty : 'medium',
           defaultQuestionCount,
           reviewGeneratedQuestions
         });

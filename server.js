@@ -6,6 +6,7 @@ const http = require('http');
 const https = require('https');
 const crypto = require('crypto');
 const { Client, GatewayIntentBits, Partials } = require('discord.js');
+const { pipeline, env, Gemma4ForConditionalGeneration, AutoProcessor, load_image } = require('@huggingface/transformers');
 
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
@@ -187,10 +188,11 @@ function normalizeRolesPayload(parsed) {
   const roles = (parsed && typeof parsed === 'object') ? parsed : {};
   const moderators = Array.isArray(roles.moderator) ? roles.moderator : [];
   const admins = Array.isArray(roles.admin) ? roles.admin : [];
-  return {
-    moderator: moderators.map(value => String(value)).filter(Boolean),
-    admin: admins.map(value => String(value)).filter(Boolean)
-  };
+  roles.moderators = Array.isArray(roles.moderators) ? [...roles.moderators, ...moderators] : moderators;
+  roles.admins = Array.isArray(roles.admins) ? [...roles.admins, ...admins] : admins;
+  delete roles.moderator;
+  delete roles.admin;
+  return roles;
 }
 
 async function readRoles() {
@@ -224,9 +226,12 @@ async function isModerator(userId) {
 async function getRolesForUser(userId) {
   if (!userId) return [];
   const roles = await readRoles();
-  const result = [];
-  if (Array.isArray(roles.moderator) && roles.moderator.includes(userId)) result.push('moderator');
-  if (Array.isArray(roles.admin) && roles.admin.includes(userId)) result.push('admin');
+  const result = ['member'];
+  for (const role in roles) {
+    if (typeof role === 'string' && Array.isArray(roles[role]) && roles[role].includes(userId)) {
+      result.push(role);
+    }
+  }
   return result;
 }
 
@@ -258,7 +263,7 @@ function normalizeUserSettings(input) {
     openaiModel: String(payload.openaiModel || 'gpt-4.1-mini').trim() || 'gpt-4.1-mini',
     openaiApiKey: String(payload.openaiApiKey || '').trim(),
     reviewGeneratedQuestions: payload.reviewGeneratedQuestions !== false,
-    defaultDifficulty: (difficulty === 'easy' || difficulty === 'medium' || difficulty === 'hard') ? difficulty : 'medium',
+    defaultDifficulty: (difficulty === 'easy' || difficulty === 'medium' || difficulty === 'hard' || difficulty === 'impossible') ? difficulty : 'medium',
     defaultQuestionCount: Number.isFinite(parsedCount) ? Math.max(3, Math.min(50, parsedCount)) : 8
   };
 }
@@ -538,7 +543,7 @@ function formatCorrectAnswerForDisplay(question) {
     const pairs = Array.isArray(question.pairs) ? question.pairs : [];
     return pairs.map(p => ({ left: p.left, right: p.right }));
   }
-  if (type === 'text' || type === 'fill') {
+  if (type === 'text' || type === 'fill' || type === 'file') {
     return Array.isArray(question.answer) ? question.answer : [question.answer];
   }
   if (type === 'number') {
@@ -902,7 +907,7 @@ app.get('/api/quizzes', async (req, res) => {
     const computedScore = (ratingForScore * 2) + (averageQuizScoreForScore * 10) + Math.log10(submissions + 1);
     const score = Math.round(computedScore * 100) / 100;
     const rawDifficulty = String(item.difficulty || '').toLowerCase();
-    const difficulty = ['easy', 'medium', 'hard'].includes(rawDifficulty) ? rawDifficulty : 'medium';
+    const difficulty = ['easy', 'medium', 'hard', 'impossible'].includes(rawDifficulty) ? rawDifficulty : 'medium';
     const tags = Array.isArray(item.tags)
       ? item.tags.map(tag => String(tag || '').trim()).filter(Boolean)
       : (typeof item.tags === 'string'
@@ -971,7 +976,7 @@ app.post('/api/quizzes', async (req, res) => {
   if (!title || !Array.isArray(questions)) return res.status(400).json({ error: 'Invalid payload' });
   const normalizedDescription = String(description || '').trim();
   if (!normalizedDescription) return res.status(400).json({ error: 'Quiz description is required.' });
-  const normalizedDifficulty = ['easy', 'medium', 'hard'].includes(String(difficulty || '').toLowerCase())
+  const normalizedDifficulty = ['easy', 'medium', 'hard', 'impossible'].includes(String(difficulty || '').toLowerCase())
     ? String(difficulty).toLowerCase()
     : 'medium';
   const normalizedTags = Array.isArray(tags)
@@ -1018,7 +1023,7 @@ app.put('/api/quizzes/:id', async (req, res) => {
   if (!title || !Array.isArray(questions)) return res.status(400).json({ error: 'Invalid payload' });
   const normalizedDescription = String(description || '').trim();
   if (!normalizedDescription) return res.status(400).json({ error: 'Quiz description is required.' });
-  const normalizedDifficulty = ['easy', 'medium', 'hard'].includes(String(difficulty || '').toLowerCase())
+  const normalizedDifficulty = ['easy', 'medium', 'hard', 'impossible'].includes(String(difficulty || '').toLowerCase())
     ? String(difficulty).toLowerCase()
     : 'medium';
   const normalizedTags = Array.isArray(tags)
@@ -1557,7 +1562,9 @@ app.post('/api/quizzes/:id/submit', async (req, res) => {
 
   let totalFraction = 0;
   const questionFeedback = [];
-  q.questions.forEach((question, idx) => {
+  const correctFileQuestions = []; // Usually quiz submission results are recalculated client-side but due to the nature of file upload questions, that can't really be done, so the server will just record if it's correct or not.
+  for (let idx = 0; idx < q.questions.length; idx++) {
+    const question = q.questions[idx];
     const userAns = answers[idx];
     const type = question.type || 'multiple';
     let fraction = 0;
@@ -1623,6 +1630,75 @@ app.post('/api/quizzes/:id/submit', async (req, res) => {
         fraction = (userAns === question.correct) ? 1 : 0;
         totalFraction += fraction;
       }
+    } else if (type === 'file') {
+      try {
+        if (typeof userAns === 'string' && userAns * (6/8) - userAns.replaceAll(/[^=]/g, "").length > 4000) {
+          res.status(400).json({error: "File must be <= 4KB in size"});
+          return;
+        }
+        const isImage = typeof userAns === 'string' && userAns.startsWith('data:image');
+        const systemPrompt = `The user will provide a file. The user's file is ${isImage ? "an image file. When analyzing the image, assume the provided image is in the context of the given criteria and evaluate it accordingly." : "NOT an image file."} Respond with "CORRECT" if the file matches one of the given criteria, and "INCORRECT" otherwise. **ONLY** respond with "CORRECT" and "INCORRECT", nothing else. Criteria: ` + (Array.isArray(question.answer) ? question.answer.join(", ") : question.answer);
+        let airesponse;
+        if (isImage) {
+          // This code is so jank ngl but it makes it able to process image files
+          const model = await Gemma4ForConditionalGeneration.from_pretrained('onnx-community/gemma-4-E2B-it-ONNX', {
+            device: 'cpu',
+            cache_dir: "./cache",
+            dtype: "q4f16"
+          });
+          const processor = await AutoProcessor.from_pretrained('onnx-community/gemma-4-E2B-it-ONNX');
+          const imageRes = await fetch(userAns);
+          const imageBlob = await imageRes.blob();
+          const image = await load_image(imageBlob);
+          const prompt = processor.apply_chat_template([{role: 'system', content: systemPrompt}, {role: 'user', content: [{type: 'image'}]}], {
+            enable_thinking: false,
+            add_generation_prompt: true,
+            // This text is from the tokenizer_config.json file that's a part of the local ai model, except it's a bit broken for some reason so I just deleted the broken part here lol
+            chat_template: "{%- macro format_parameters(properties, required) -%}\n    {%- set standard_keys = ['description', 'type', 'properties', 'required', 'nullable'] -%}\n    {%- set ns = namespace(found_first=false) -%}\n    {%- for key, value in properties | dictsort -%}\n        {%- set add_comma = false -%}\n        {%- if key not in standard_keys -%}\n            {%- if ns.found_first %},{% endif -%}\n            {%- set ns.found_first = true -%}\n            {{ key }}:{\n            {%- if value['description'] -%}\n                description:<|\"|>{{ value['description'] }}<|\"|>\n                {%- set add_comma = true -%}\n            {%- endif -%}\n            {%- if value['type'] | upper == 'STRING' -%}\n                {%- if value['enum'] -%}\n                    {%- if add_comma %},{%- else -%} {%- set add_comma = true -%} {% endif -%}\n                    enum:{{ format_argument(value['enum']) }}\n                {%- endif -%}\n            {%- elif value['type'] | upper == 'ARRAY' -%}\n                {%- if value['items'] is mapping and value['items'] -%}\n                    {%- if add_comma %},{%- else -%} {%- set add_comma = true -%} {% endif -%}\n                    items:{\n                    {%- set ns_items = namespace(found_first=false) -%}\n                    {%- for item_key, item_value in value['items'] | dictsort -%}\n                        {%- if item_value is not none -%}\n                            {%- if ns_items.found_first %},{% endif -%}\n                            {%- set ns_items.found_first = true -%}\n                            {%- if item_key == 'properties' -%}\n                                properties:{\n                                {%- if item_value is mapping -%}\n                                    {{- format_parameters(item_value, value['items']['required'] | default([])) -}}\n                                {%- endif -%}\n                                }\n                            {%- elif item_key == 'required' -%}\n                                required:[\n                                {%- for req_item in item_value -%}\n                                    <|\"|>{{- req_item -}}<|\"|>\n                                    {%- if not loop.last %},{% endif -%}\n                                {%- endfor -%}\n                                ]\n                            {%- elif item_key == 'type' -%}\n                                {%- if item_value is string -%}\n                                    type:{{ format_argument(item_value | upper) }}\n                                {%- else -%}\n                                    type:{{ format_argument(item_value | map('upper') | list) }}\n                                {%- endif -%}\n                            {%- else -%}\n                                {{ item_key }}:{{ format_argument(item_value) }}\n                            {%- endif -%}\n                        {%- endif -%}\n                    {%- endfor -%}\n                    }\n                {%- endif -%}\n            {%- endif -%}\n            {%- if value['nullable'] %}\n                {%- if add_comma %},{%- else -%} {%- set add_comma = true -%} {% endif -%}\n                nullable:true\n            {%- endif -%}\n            {%- if value['type'] | upper == 'OBJECT' -%}\n                {%- if value['properties'] is defined and value['properties'] is mapping -%}\n                    {%- if add_comma %},{%- else -%} {%- set add_comma = true -%} {% endif -%}\n                    properties:{\n                    {{- format_parameters(value['properties'], value['required'] | default([])) -}}\n                    }\n                {%- elif value is mapping -%}\n                    {%- if add_comma %},{%- else -%} {%- set add_comma = true -%} {% endif -%}\n                    properties:{\n                    {{- format_parameters(value, value['required'] | default([])) -}}\n                    }\n                {%- endif -%}\n                {%- if value['required'] -%}\n                    {%- if add_comma %},{%- else -%} {%- set add_comma = true -%} {% endif -%}\n                    required:[\n                    {%- for item in value['required'] | default([]) -%}\n                        <|\"|>{{- item -}}<|\"|>\n                        {%- if not loop.last %},{% endif -%}\n                    {%- endfor -%}\n                    ]\n                {%- endif -%}\n            {%- endif -%}\n            {%- if add_comma %},{%- else -%} {%- set add_comma = true -%} {% endif -%}\n            type:<|\"|>{{ value['type'] | upper }}<|\"|>}\n        {%- endif -%}\n    {%- endfor -%}\n{%- endmacro -%}\n{%- macro format_function_declaration(tool_data) -%}\n    declaration:{{- tool_data['function']['name'] -}}{description:<|\"|>{{- tool_data['function']['description'] -}}<|\"|>\n    {%- set params = tool_data['function']['parameters'] -%}\n    {%- if params -%}\n        ,parameters:{\n        {%- if params['properties'] -%}\n            properties:{ {{- format_parameters(params['properties'], params['required']) -}} },\n        {%- endif -%}\n        {%- if params['required'] -%}\n            required:[\n            {%- for item in params['required'] -%}\n                <|\"|>{{- item -}}<|\"|>\n                {{- ',' if not loop.last -}}\n            {%- endfor -%}\n            ],\n        {%- endif -%}\n        {%- if params['type'] -%}\n            type:<|\"|>{{- params['type'] | upper -}}<|\"|>}\n        {%- endif -%}\n    {%- endif -%}\n    {%- if 'response' in tool_data['function'] -%}\n        {%- set response_declaration = tool_data['function']['response'] -%}\n        ,response:{\n        {%- if response_declaration['description'] -%}\n            description:<|\"|>{{- response_declaration['description'] -}}<|\"|>,\n        {%- endif -%}\n        {%- if response_declaration['type'] | upper == 'OBJECT' -%}\n            type:<|\"|>{{- response_declaration['type'] | upper -}}<|\"|>}\n        {%- endif -%}\n    {%- endif -%}\n    }\n{%- endmacro -%}\n{%- macro format_argument(argument, escape_keys=True) -%}\n    {%- if argument is string -%}\n        {{- '<|\"|>' + argument + '<|\"|>' -}}\n    {%- elif argument is boolean -%}\n        {{- 'true' if argument else 'false' -}}\n    {%- elif argument is mapping -%}\n        {{- '{' -}}\n        {%- set ns = namespace(found_first=false) -%}\n        {%- for key, value in argument | dictsort -%}\n            {%- if ns.found_first %},{% endif -%}\n            {%- set ns.found_first = true -%}\n            {%- if escape_keys -%}\n                {{- '<|\"|>' + key + '<|\"|>' -}}\n            {%- else -%}\n                {{- key -}}\n            {%- endif -%}\n            :{{- format_argument(value, escape_keys=escape_keys) -}}\n        {%- endfor -%}\n        {{- '}' -}}\n    {%- elif argument is sequence -%}\n        {{- '[' -}}\n        {%- for item in argument -%}\n            {{- format_argument(item, escape_keys=escape_keys) -}}\n            {%- if not loop.last %},{% endif -%}\n        {%- endfor -%}\n        {{- ']' -}}\n    {%- else -%}\n        {{- argument -}}\n    {%- endif -%}\n{%- endmacro -%}\n{%- macro strip_thinking(text) -%}\n    {%- set ns = namespace(result='') -%}\n    {%- for part in text.split('<channel|>') -%}\n        {%- if '<|channel>' in part -%}\n            {%- set ns.result = ns.result + part.split('<|channel>')[0] -%}\n        {%- else -%}\n            {%- set ns.result = ns.result + part -%}\n        {%- endif -%}\n    {%- endfor -%}\n    {{- ns.result  -}}\n{%- endmacro -%}\n\n{%- macro format_tool_response_block(tool_name, response) -%}\n    {{- '<|tool_response>' -}}\n    {%- if response is mapping -%}\n        {{- 'response:' + tool_name + '{' -}}\n        {%- for key, value in response | dictsort -%}\n            {{- key -}}:{{- format_argument(value, escape_keys=False) -}}\n            {%- if not loop.last %},{% endif -%}\n        {%- endfor -%}\n        {{- '}' -}}\n    {%- else -%}\n        {{- 'response:' + tool_name + '{value:' + format_argument(response, escape_keys=False) + '}' -}}\n    {%- endif -%}\n    {{- '<tool_response|>' -}}\n{%- endmacro -%}\n\n{%- set ns = namespace(prev_message_type=None) -%}\n{%- set loop_messages = messages -%}\n{{- bos_token -}}\n{#- Handle System/Tool Definitions Block -#}\n{%- if (enable_thinking is defined and enable_thinking) or tools or messages[0]['role'] in ['system', 'developer'] -%}\n    {{- '<|turn>system\\n' -}}\n\n    {#- Inject Thinking token at the very top of the FIRST system turn -#}\n    {%- if enable_thinking is defined and enable_thinking -%}\n        {{- '<|think|>\\n' -}}\n        {%- set ns.prev_message_type = 'think' -%}\n    {%- endif -%}\n\n    {%- if messages[0]['role'] in ['system', 'developer'] -%}\n        {{- messages[0]['content']  -}}\n        {%- set loop_messages = messages[1:] -%}\n    {%- endif -%}\n\n    {%- if tools -%}\n        {%- for tool in tools %}\n            {{- '<|tool>' -}}\n            {{- format_function_declaration(tool)  -}}\n            {{- '<tool|>' -}}\n        {%- endfor %}\n        {%- set ns.prev_message_type = 'tool' -%}\n    {%- endif -%}\n\n    {{- '<turn|>\\n' -}}\n{%- endif %}\n\n{#- Pre-scan: find last user message index for reasoning guard -#}\n{%- set ns_turn = namespace(last_user_idx=-1) -%}\n{%- for i in range(loop_messages | length) -%}\n    {%- if loop_messages[i]['role'] == 'user' -%}\n        {%- set ns_turn.last_user_idx = i -%}\n    {%- endif -%}\n{%- endfor -%}\n\n{#- Loop through messages -#}\n{%- for message in loop_messages -%}\n    {%- if message['role'] != 'tool' -%}\n    {%- set ns.prev_message_type = None -%}\n    {%- set role = 'model' if message['role'] == 'assistant' else message['role'] -%}\n    {#- Detect continuation: suppress duplicate <|turn>model when previous non-tool message was also assistant -#}\n    {%- set prev_nt = namespace(role=None, found=false) -%}\n    {%- if loop.index0 > 0 -%}\n        {%- for j in range(loop.index0 - 1, -1, -1) -%}\n            {%- if not prev_nt.found -%}\n                {%- if loop_messages[j]['role'] != 'tool' -%}\n                    {%- set prev_nt.role = loop_messages[j]['role'] -%}\n                    {%- set prev_nt.found = true -%}\n                {%- endif -%}\n            {%- endif -%}\n        {%- endfor -%}\n    {%- endif -%}\n    {%- set continue_same_model_turn = (role == 'model' and prev_nt.role == 'assistant') -%}\n    {%- if not continue_same_model_turn -%}\n        {{- '<|turn>' + role + '\\n' }}\n    {%- endif -%}\n\n    {#- Render reasoning/reasoning_content as thinking channel -#}\n    {%- set thinking_text = message.get('reasoning') or message.get('reasoning_content') -%}\n    {%- if thinking_text and loop.index0 > ns_turn.last_user_idx and message.get('tool_calls') -%}\n        {{- '<|channel>thought\\n' + thinking_text + '\\n<channel|>' -}}\n    {%- endif -%}\n\n            {%- if message['tool_calls'] -%}\n                {%- for tool_call in message['tool_calls'] -%}\n                    {%- set function = tool_call['function'] -%}\n                    {{- '<|tool_call>call:' + function['name'] + '{' -}}\n                    {%- if function['arguments'] is mapping -%}\n                        {%- set ns_args = namespace(found_first=false) -%}\n                        {%- for key, value in function['arguments'] | dictsort -%}\n                            {%- if ns_args.found_first %},{% endif -%}\n                            {%- set ns_args.found_first = true -%}\n                            {{- key -}}:{{- format_argument(value, escape_keys=False) -}}\n                        {%- endfor -%}\n                    {%- elif function['arguments'] is string -%}\n                        {{- function['arguments'] -}}\n                    {%- endif -%}\n                    {{- '}<tool_call|>' -}}\n                {%- endfor -%}\n                {%- set ns.prev_message_type = 'tool_call' -%}\n            {%- endif -%}\n\n            {%- set ns_tr_out = namespace(flag=false) -%}\n            {%- if message.get('tool_responses') -%}\n                {#- Legacy: tool_responses embedded on the assistant message (Google/Gemma native) -#}\n                {%- for tool_response in message['tool_responses'] -%}\n                    {{- format_tool_response_block(tool_response['name'] | default('unknown'), tool_response['response']) -}}\n                    {%- set ns_tr_out.flag = true -%}\n                    {%- set ns.prev_message_type = 'tool_response' -%}\n                {%- endfor -%}\n            {%- elif message.get('tool_calls') -%}\n                {#- OpenAI Chat Completions: forward-scan consecutive role:tool messages -#}\n                {%- set ns_tool_scan = namespace(stopped=false) -%}\n                {%- for k in range(loop.index0 + 1, loop_messages | length) -%}\n                    {%- if ns_tool_scan.stopped -%}\n                    {%- elif loop_messages[k]['role'] != 'tool' -%}\n                        {%- set ns_tool_scan.stopped = true -%}\n                    {%- else -%}\n                        {%- set follow = loop_messages[k] -%}\n                        {#- Resolve tool_call_id to function name -#}\n                        {%- set ns_tname = namespace(name=follow.get('name') | default('unknown')) -%}\n                        {%- for tc in message['tool_calls'] -%}\n                            {%- if tc.get('id') == follow.get('tool_call_id') -%}\n                                {%- set ns_tname.name = tc['function']['name'] -%}\n                            {%- endif -%}\n                        {%- endfor -%}\n                        {#- Handle content as string or content-parts array -#}\n                        {%- set tool_body = follow.get('content') -%}\n                        {%- if tool_body is string -%}\n                            {{- format_tool_response_block(ns_tname.name, tool_body) -}}\n                        {%- elif tool_body is sequence and tool_body is not string -%}\n                            {%- set ns_txt = namespace(s='') -%}\n                            {%- for part in tool_body -%}\n                                {%- if part.get('type') == 'text' -%}\n                                    {%- set ns_txt.s = ns_txt.s + (part.get('text') | default('')) -%}\n                                {%- endif -%}\n                            {%- endfor -%}\n                            {{- format_tool_response_block(ns_tname.name, ns_txt.s) -}}\n                        {%- else -%}\n                            {{- format_tool_response_block(ns_tname.name, tool_body) -}}\n                        {%- endif -%}\n                        {%- set ns_tr_out.flag = true -%}\n                        {%- set ns.prev_message_type = 'tool_response' -%}\n                    {%- endif -%}\n                {%- endfor -%}\n            {%- endif -%}\n\n            {%- if message['content'] is string -%}\n                {%- if role == 'model' -%}\n                    {{- strip_thinking(message['content']) -}}\n                {%- else -%}\n                    {{- message['content']  -}}\n                {%- endif -%}\n            {%- elif message['content'] is sequence -%}\n                {%- for item in message['content'] -%}\n                    {%- if item['type'] == 'text' -%}\n                        {%- if role == 'model' -%}\n                            {{- strip_thinking(item['text']) -}}\n                        {%- else -%}\n                            {{- item['text']  -}}\n                        {%- endif -%}\n                    {%- elif item['type'] == 'image' -%}\n                        {{- '<|image|>' -}}\n                        {%- set ns.prev_message_type = 'image' -%}\n                    {%- elif item['type'] == 'audio' -%}\n                        {{- '<|audio|>' -}}\n                        {%- set ns.prev_message_type = 'audio' -%}\n                    {%- elif item['type'] == 'video' -%}\n                        {{- '<|video|>' -}}\n                        {%- set ns.prev_message_type = 'video' -%}\n                    {%- endif -%}\n                {%- endfor -%}\n            {%- endif -%}\n\n        {%- if ns.prev_message_type == 'tool_call' and not ns_tr_out.flag -%}\n            {{- '<|tool_response>' -}}\n        {%- elif not (ns_tr_out.flag and not message.get('content')) -%}\n            {{- '<turn|>\\n' -}}\n        {%- endif -%}\n    {%- endif -%}\n{%- endfor -%}\n\n{%- if add_generation_prompt -%}\n    {%- if ns.prev_message_type != 'tool_response' and ns.prev_message_type != 'tool_call' -%}\n        {{- '<|turn>model\\n' -}}\n    {%- endif -%}\n{%- endif -%}",
+            tokenize: false
+          }).replace("<|image|>", "<|image|>".repeat(256));
+          const textInput = await processor(prompt);
+          const imageInput = await processor.image_processor(image);
+
+          input = {
+            input_ids: textInput.input_ids,
+            attention_mask: textInput.attention_mask,
+            ...imageInput
+          }
+
+          const response = await model.generate({
+            ...input,
+            max_new_tokens: 200
+          });
+          airesponse = processor.batch_decode(response.slice(null, [input.input_ids.dims.at(-1), null]), {
+            skip_special_tokens: true
+          })[0];
+        } else {
+          const model = await pipeline('text-generation', 'onnx-community/gemma-4-E2B-it-ONNX', {
+            device: 'cpu',
+            cache_dir: "./cache/",
+            dtype: 'q4f16',
+            //progress_callback: console.log
+          });
+          //console.log('1', Buffer.from(typeof userAns === 'string' ? userAns : '', 'base64').toString('ascii'));
+          let response = await model([{role: 'system', content: systemPrompt},
+            {role: 'user', content: Buffer.from(typeof userAns === 'string' ? userAns.replace(/data:.*;base64,/, "") : '', 'base64').toString('ascii')}
+          ], {
+            max_new_tokens: 20
+          });
+          airesponse = response[0].generated_text.filter(c => c.role === 'assistant')[0].content;
+          //console.log('2', airesponse);
+        }
+        if (typeof airesponse === 'string' && airesponse.includes('CORRECT') && !airesponse.includes('INCORRECT')) {
+          fraction = 1;
+          totalFraction += fraction;
+          correctFileQuestions.push(idx);
+        }
+      } catch (e) {
+        console.warn(e);
+        res.status(500).json({error: "Error occured processing a file answer"});
+        return;
+      }
     }
 
     const isCorrect = fraction >= 0.999;
@@ -1635,14 +1711,14 @@ app.post('/api/quizzes/:id/submit', async (req, res) => {
       entry.correctAnswer = formatCorrectAnswerForDisplay(question);
     }
     questionFeedback.push(entry);
-  });
+  };
   const totalQuestions = q.questions.length || 1;
   const scorePercent = Math.round(100 * (totalFraction / totalQuestions));
 
   // save result
   const results = await readResults();
   const rid = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-  const result = { id: rid, quizId: q.id, userId: userId || null, score: scorePercent, raw: totalFraction, totalQuestions, timestamp: new Date().toISOString(), answers };
+  const result = { id: rid, quizId: q.id, userId: userId || null, score: scorePercent, raw: totalFraction, totalQuestions, timestamp: new Date().toISOString(), answers, correctFileQuestions };
   results.push(result);
   await writeResults(results);
 
@@ -1714,7 +1790,8 @@ app.get('/api/quizzes/:id/results/:resultId', async (req, res) => {
     correct: Number.isFinite(Number(result.raw)) ? Number(result.raw) : 0,
     total: Number(result.totalQuestions) || 0,
     timestamp: result.timestamp,
-    answers: Array.isArray(result.answers) ? result.answers : []
+    answers: Array.isArray(result.answers) ? result.answers : [],
+    correctFileQuestions: Array.isArray(result.correctFileQuestions) ? result.correctFileQuestions : []
   });
 });
 
@@ -1785,6 +1862,8 @@ app.get('/api/quizzes/:id/ratings', async (req, res) => {
 
 // user uploads avatar
 const multer = require('multer');
+const { diff } = require('util');
+const { text } = require('stream/consumers');
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, UPLOAD_DIR),
   filename: (req, file, cb) => {

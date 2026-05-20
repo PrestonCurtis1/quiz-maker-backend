@@ -457,12 +457,13 @@
     if (v.startsWith('match')) return 'matching';
     if (v.startsWith('text')) return 'text';
     if (v.startsWith('number') || v.startsWith('numeric')) return 'number';
+    if (v.startsWith('file')) return 'file';
     return null;
   }
 
   function normalizeDifficulty(value) {
     const v = (value || '').toLowerCase().trim();
-    if (v === 'easy' || v === 'medium' || v === 'hard') return v;
+    if (v === 'easy' || v === 'medium' || v === 'hard' || v === 'impossible') return v;
     return 'medium';
   }
 
@@ -533,7 +534,7 @@
       const typeLabel = document.createElement('label');
       typeLabel.textContent = 'Question type';
       const typeSelect = document.createElement('select');
-      ['mixed', 'multiple', 'multi', 'matching', 'text', 'number'].forEach(type => {
+      ['mixed', 'multiple', 'multi', 'matching', 'text', 'number', 'file'].forEach(type => {
         const opt = document.createElement('option');
         opt.value = type;
         opt.textContent = type;
@@ -547,7 +548,7 @@
       const difficultyLabel = document.createElement('label');
       difficultyLabel.textContent = 'Difficulty';
       const difficultySelect = document.createElement('select');
-      ['easy', 'medium', 'hard'].forEach(level => {
+      ['easy', 'medium', 'hard', 'impossible'].forEach(level => {
         const opt = document.createElement('option');
         opt.value = level;
         opt.textContent = level;
@@ -587,6 +588,17 @@
       answerHintLabel.textContent = 'Answer instruction (optional)';
       const answerHintInput = document.createElement('input');
       answerHintInput.type = 'text';
+
+      const optimizeLabel = document.createElement('label');
+      optimizeLabel.textContent = '"Optimize" questions with Local AI'
+      const optimizeInput = document.createElement('select');
+      ['yes', 'no'].forEach(opt => {
+        const option = document.createElement('option');
+        option.value = opt;
+        option.textContent = opt;
+        optimizeInput.appendChild(option);
+      });
+      optimizeInput.value = 'no';
 
       const providerWrap = document.createElement('div');
       providerWrap.className = 'ai-draft-provider';
@@ -639,6 +651,8 @@
       form.appendChild(descriptionHintInput);
       form.appendChild(answerHintLabel);
       form.appendChild(answerHintInput);
+      form.appendChild(optimizeLabel);
+      form.appendChild(optimizeInput);
       form.appendChild(providerWrap);
       form.appendChild(note);
       form.appendChild(actions);
@@ -694,7 +708,8 @@
             questionHint: normalizeSpaces(questionHintInput.value),
             descriptionHint: normalizeSpaces(descriptionHintInput.value),
             answerHint: normalizeSpaces(answerHintInput.value)
-          }
+          },
+          optimizeQuiz: optimizeInput.value === 'yes'
         });
       });
 
@@ -1072,6 +1087,11 @@
         answerHelp = 'Comma-separated numeric values (example: 12, 12.5).';
         const arr = Array.isArray(q.answer) ? q.answer : [q.answer];
         answerValue = arr.filter(v => v != null && v !== '').join(',');
+      } else if (type === 'file') {
+        answerLabel.textContent = 'File criteria';
+        answerHelp = 'Comma-seperated list of possible file criteria'
+        const arr = Array.isArray(q.answer) ? q.answer : [q.answer];
+        answerValue = arr.filter(Boolean).join(',');
       } else {
         answerLabel.textContent = 'Accepted answer(s)';
         answerHelp = 'Comma-separated values.';
@@ -1941,14 +1961,14 @@
 
   function normalizeAiQuestionType(value) {
     const t = (value || '').toLowerCase().trim();
-    if (t === 'multiple' || t === 'multi' || t === 'matching' || t === 'text' || t === 'number') return t;
+    if (t === 'multiple' || t === 'multi' || t === 'matching' || t === 'text' || t === 'number' || t === 'file') return t;
     if (t.startsWith('multiple')) return 'multiple';
     if (t.startsWith('match')) return 'matching';
     if (t.startsWith('num')) return 'number';
     return 'multiple';
   }
 
-  function normalizeQuizFromAiDraft(draft, context) {
+  function normalizeQuizFromAiDraft(draft, context, optimize=true) {
     const input = draft && typeof draft === 'object' ? draft : {};
     const questions = Array.isArray(input.questions) ? input.questions : [];
     const normalized = questions.map((raw, index) => {
@@ -1989,14 +2009,14 @@
       return q;
     });
 
-    const optimized = optimizeQuizQuestions(normalized, {
+    const optimized = optimize ? optimizeQuizQuestions(normalized, {
       topic: context.topic,
       facets: context.facets,
       keyIdeas: context.keyIdeas,
       difficulty: context.difficulty,
       answerHint: context.answerHint,
       defaultType: context.requestedType || 'multiple'
-    });
+    }) : normalized;
 
     const titleBase = normalizeSpaces(input.title || `${context.topic} Quiz (Draft)`);
     const descriptionBase = normalizeSpaces(input.description || context.description);
@@ -2010,7 +2030,7 @@
     };
   }
 
-  async function callOpenAiForQuiz({ model, apiKey, systemPrompt, userPrompt, context }) {
+  async function callOpenAiForQuiz({ model, apiKey, systemPrompt, userPrompt, context, optimize }) {
     if (!apiKey) throw new Error('OpenAI API key is required. Add it in Profile settings.');
 
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -2048,7 +2068,7 @@
 
     if (!content.trim()) throw new Error('OpenAI returned an empty response');
     const parsed = tryParseQuizJson(content);
-    return normalizeQuizFromAiDraft(parsed, context);
+    return normalizeQuizFromAiDraft(parsed, context, optimize);
   }
 
   function buildOpenAiPromptFromConfig(config, prompt) {
@@ -2068,7 +2088,7 @@
   }
 
   function openAiSystemPrompt() {
-    return 'You generate educational quizzes and must output ONLY valid JSON with shape: {"title":string,"description":string,"questions":[{"type":"multiple|multi|matching|text|number","text":string,"description":string,"options"?:string[],"correct"?:number|number[],"answer"?:string|string[]|number|number[],"pairs"?:[{"left":string,"right":string}]}]}. For multiple/multi include at least 4 options. For matching include at least 3 pairs. No markdown fences. Prioritize factual correctness over creativity. Never fabricate specific lore/trivia when uncertain; instead produce conceptual or mechanics-focused questions that remain correct. Verify each correct index maps to the intended option text before returning JSON.';
+    return 'You generate educational quizzes and must output ONLY valid JSON with shape: {"title":string,"description":string,"questions":[{"type":"multiple|multi|matching|text|number|file","text":string,"description":string,"options"?:string[],"correct"?:number|number[],"answer"?:string|string[]|number|number[],"pairs"?:[{"left":string,"right":string}]}]}. For multiple/multi include at least 4 options. For matching include at least 3 pairs. For text, number, and file, include at least one answer. File questions have an upload limit of 4kb (text/image). File question answers should be a description of criteria the file should meet, where the question is correct if it meets any of them. No markdown fences. Prioritize factual correctness over creativity. Never fabricate specific lore/trivia when uncertain; instead produce conceptual or mechanics-focused questions that remain correct. Verify each correct index maps to the intended option text before returning JSON.';
   }
 
   function askPdfQuizConfig(defaults = {}) {
@@ -2114,7 +2134,7 @@
       const difficultyLabel = document.createElement('label');
       difficultyLabel.textContent = 'Difficulty';
       const difficultySelect = document.createElement('select');
-      ['easy', 'medium', 'hard'].forEach(level => {
+      ['easy', 'medium', 'hard', 'impossible'].forEach(level => {
         const opt = document.createElement('option');
         opt.value = level;
         opt.textContent = level;
@@ -2205,6 +2225,7 @@
         config.generalPrompt || [config.topic, config.focus].filter(Boolean).join(' — ') || config.topic
       );
       const useOpenAi = !!config.useOpenAi;
+      const optimize = !!config.optimizeQuiz;
       const reviewEnabled = shouldReviewGeneratedQuestions(settings);
 
       buttonEl.disabled = true;
@@ -2234,7 +2255,8 @@
             apiKey: settings.openaiApiKey,
             systemPrompt: openAiSystemPrompt(),
             userPrompt: buildOpenAiPromptFromConfig(config, prompt),
-            context
+            context,
+            optimize
           });
         } else {
           quiz = await buildLocalQuizFromPromptWithModel(prompt, config, {
