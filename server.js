@@ -11,6 +11,31 @@ const ollama = require('ollama').default;
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const app = express();
+const DOTENV_PATH = path.join(__dirname, '.env');
+
+function loadDotEnvFile() {
+  if (!fsSync.existsSync(DOTENV_PATH)) return;
+  try {
+    const contents = fsSync.readFileSync(DOTENV_PATH, 'utf8');
+    contents.split(/\r?\n/).forEach(line => {
+      const trimmed = String(line || '').trim();
+      if (!trimmed || trimmed.startsWith('#')) return;
+      const eqIndex = trimmed.indexOf('=');
+      if (eqIndex <= 0) return;
+      const key = trimmed.slice(0, eqIndex).trim();
+      if (!key || process.env[key] != null) return;
+      let value = trimmed.slice(eqIndex + 1).trim();
+      if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+        value = value.slice(1, -1);
+      }
+      process.env[key] = value;
+    });
+  } catch (err) {
+    console.warn('Failed to load .env file:', err.message || err);
+  }
+}
+
+loadDotEnvFile();
 const DATA_DIR = path.join(__dirname, 'data');
 const RESULTS_FILE = path.join(DATA_DIR, 'results.json');
 const DATA_FILE = path.join(DATA_DIR, 'quizzes.json');
@@ -26,6 +51,8 @@ const PORT = process.env.PORT || 80;
 const HTTPS_PORT = process.env.HTTPS_PORT || 443;
 const HTTP_REDIRECT_PORT = process.env.HTTP_PORT || 80;
 const JWT_SECRET = process.env.JWT_SECRET || 'change-this-secret-in-production';
+const UPDATE_SECRET = process.env.UPDATE_SECRET || 'change-this-update-secret';
+const UPDATE_SCRIPT = process.env.UPDATE_SCRIPT || 'git pull --rebase && npm install --production && pm2 restart 0';
 const SSL_KEY_PATH = process.env.SSL_KEY_PATH || '';
 const SSL_CERT_PATH = process.env.SSL_CERT_PATH || '';
 const SSL_CA_PATH = process.env.SSL_CA_PATH || '';
@@ -35,6 +62,27 @@ const DISCORD_CLIENT_ID = String(process.env.DISCORD_CLIENT_ID || '').trim();
 const DISCORD_CLIENT_SECRET = String(process.env.DISCORD_CLIENT_SECRET || '').trim();
 const DISCORD_OAUTH_REDIRECT_URI = String(process.env.DISCORD_OAUTH_REDIRECT_URI || '').trim();
 const DISCORD_SERVER_ID = String(process.env.DISCORD_SERVER_ID || '').trim();
+
+const { exec } = require('child_process');
+
+async function run_command(command) {
+  return new Promise((resolve, reject) => {
+    exec(command, (error, stdout, stderr) => {
+      if (error) {
+        console.error(`Execution error: ${error.message}`);
+        return reject(error);
+      }
+      
+      if (stderr) {
+        console.error(`Terminal stderr:\n${stderr}`);
+        return resolve({ stdout, stderr }); 
+      }
+      
+      console.log(`Terminal stdout:\n${stdout}`);
+      resolve({ stdout, stderr });
+    });
+  });
+}
 
 let discordClientPromise = null;
 
@@ -830,6 +878,29 @@ function renderQuizSeoHtml(model) {
 </body>
 </html>`;
 }
+
+app.get('/whatismyip', (req, res) => {
+  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress || null;
+  res.json({ ip });
+});
+
+app.get('/update-from-github', async (req, res) => {
+  console.log('Received request to /update-from-github');
+  console.log('Query secret:', req.query.secret);
+  console.log('Environment UPDATE_SECRET:', UPDATE_SECRET);
+  const secret = req.query.secret;
+  if (secret !== UPDATE_SECRET) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+  try {
+    console.log('Executing update script:', UPDATE_SCRIPT);
+    await run_command(UPDATE_SCRIPT);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Update failed:', err);
+    res.status(500).json({ error: 'Update failed', details: err.message || String(err) });
+  }
+});
 
 app.get('/sitemap.xml', async (req, res) => {
   const baseUrl = getPublicBaseUrl(req);

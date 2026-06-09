@@ -1,11 +1,25 @@
-Delete Account And Delete Quiz Buttons done
-Allow Quiz Authors to view results done
-Show An Average score for each quiz done
-add a score for each Quiz calculated by formula Score = (Rating * 2) + (average_quiz_score * 10) + log_10(submissions+1) done
-Add sort by to index.html with rating, average quiz score, submissions, score(default) done
-Add order by low-high high-low done
-Add filters User, Difficulty, Tags done
-add partial credit settings option to quiz creation default true done
-add require login option to quizzes default false done
-add password reset feature and forgot password using discord done
-add discord webhooks for. quiz created. quiz updated. quiz submissionm, quiz rating. done
+add question weights
+    for example lets take a quiz about fruits with 5 questions
+    (question #) (question type) (possible points) (score %) (points earned)
+    (1) (select all that apply) (7) (0.8) (5.6)
+    (2) (multiple choice) (2) (0) (0)
+    (3) (number) (10) (1) (10)
+    (4) (match) (3) (0.66) (2)
+    (5) (text) (3) (1) (3)
+    we add the total points 7 + 2 + 10 + 3 + 3 = 9 + 13 + 3 = 12 + 13 = 25
+    calculate earned points for each question by multiple total by score then rounding to 2 decimal places
+        1: 7 * 0.8 = 5.6
+        2: 2 * 0 = 0
+        3: 10 * 1 = 10
+        4: 3 * 0.66 = 2
+        5: 3 * 1 = 3
+    we add the earned points 5.6 + 0 + 10 + 2 + 3 = 15.6 + 5 = 20.6
+    we get the overall grade by dividing earned points by total points and rounding to 2 decimal places 20.6 / 25 = 0.824 = 0.82
+add ability for quiz owner to change a user score
+    they can go down to quiz submissions and select the submission that they want to change the score for
+    they can either change the score for 1 question or the whole quiz
+    when a score is change it will update the total quiz score and the user average quiz-score & stuff
+add a view count
+add a like/save feature
+improve local AI 
+add more AI Options like gemini or grok and stuff
