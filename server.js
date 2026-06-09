@@ -11,31 +11,6 @@ const ollama = require('ollama').default;
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const app = express();
-const DOTENV_PATH = path.join(__dirname, '.env');
-
-function loadDotEnvFile() {
-  if (!fsSync.existsSync(DOTENV_PATH)) return;
-  try {
-    const contents = fsSync.readFileSync(DOTENV_PATH, 'utf8');
-    contents.split(/\r?\n/).forEach(line => {
-      const trimmed = String(line || '').trim();
-      if (!trimmed || trimmed.startsWith('#')) return;
-      const eqIndex = trimmed.indexOf('=');
-      if (eqIndex <= 0) return;
-      const key = trimmed.slice(0, eqIndex).trim();
-      if (!key || process.env[key] != null) return;
-      let value = trimmed.slice(eqIndex + 1).trim();
-      if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-        value = value.slice(1, -1);
-      }
-      process.env[key] = value;
-    });
-  } catch (err) {
-    console.warn('Failed to load .env file:', err.message || err);
-  }
-}
-
-loadDotEnvFile();
 const DATA_DIR = path.join(__dirname, 'data');
 const RESULTS_FILE = path.join(DATA_DIR, 'results.json');
 const DATA_FILE = path.join(DATA_DIR, 'quizzes.json');
@@ -889,7 +864,7 @@ app.get('/update-from-github', async (req, res) => {
   console.log('Query secret:', req.query.secret);
   console.log('Environment UPDATE_SECRET:', UPDATE_SECRET);
   const secret = req.query.secret;
-  if (secret !== UPDATE_SECRET) {
+  if (secret != UPDATE_SECRET) {
     return res.status(403).json({ error: 'Forbidden' });
   }
   try {
