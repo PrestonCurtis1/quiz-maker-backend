@@ -63,6 +63,16 @@ let discordClientPromise = null;
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
+app.use((req, res, next) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "*");
+  res.setHeader("Access-Control-Allow-Headers", "*");
+  if (req.method === "OPTIONS") {
+    res.status(200).send();
+    return;
+  }
+  next();
+});
 
 async function readJsonArrayFile(filePath) {
   const txt = await fs.readFile(filePath, 'utf8');
