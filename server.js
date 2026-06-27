@@ -1708,7 +1708,7 @@ app.post('/api/quizzes/:id/submit', async (req, res) => {
         } else {
           const response = await ollama.generate({
             model: 'tinyllama:latest',
-            prompt: `correct if the file contains 3, correct if the file contains 4: hi4;CORRECT  correct if starts with the letter \`d\`: dare;CORRECT  correct if the file contains only the number 2: 23;INCORRECT  wrong if the file contains the number 4, wrong if the file contains the number 5: 41;INCORRECT  ${Array.isArray(question.answer) ? question.answer.join(", ") : question.answer}: ${Buffer.from(typeof userAns === 'string' ? userAnsB64 : '', 'base64').toString('ascii')};`
+            prompt: `${Array.isArray(question.answer) ? question.answer.join(", ") : question.answer}: ${Buffer.from(typeof userAns === 'string' ? userAnsB64 : '', 'base64').toString('ascii')} [CORRECT/INCORRECT] #`
           });
 
           airesponse = response.response;
