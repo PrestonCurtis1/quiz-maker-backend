@@ -1708,7 +1708,7 @@ app.post('/api/quizzes/:id/submit', async (req, res) => {
         } else {
           const response = await ollama.generate({
             model: 'tinyllama:latest',
-            prompt: `${Array.isArray(question.answer) ? question.answer.join(", ") : question.answer}: ${Buffer.from(typeof userAns === 'string' ? userAnsB64 : '', 'base64').toString('ascii')} [CORRECT/INCORRECT] #`
+            prompt: `Criteria: ${Array.isArray(question.answer) ? question.answer.join(", ") : question.answer}. File: ${Buffer.from(typeof userAns === 'string' ? userAnsB64 : '', 'base64').toString('ascii')}\nis the file correct according to the criteria? [CORRECT/INCORRECT] #`
           });
 
           airesponse = response.response;
