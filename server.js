@@ -1694,7 +1694,7 @@ app.post('/api/quizzes/:id/submit', async (req, res) => {
           return;
         }
         const isImage = typeof userAns === 'string' && userAns.startsWith('data:image');
-        const systemPrompt = `The user will provide a file. The user's file is ${isImage ? "an image file. When analyzing the image, assume the provided image is in the context of the given criteria and evaluate it accordingly." : "NOT an image file."} Respond with "CORRECT" if the file matches one of the given criteria, and "INCORRECT" otherwise. **ONLY** respond with "CORRECT" and "INCORRECT", nothing else. **ONLY ANSWER WITH "CORRECT" OR "INCORRECT" AND NOTHING ELSE**. Answer "CORRECT" OR "INCORRECT" based on the following criteria: ` + (Array.isArray(question.answer) ? question.answer.join(", ") : question.answer);
+        const systemPrompt = `The user will provide a file. The user's file is ${isImage ? "an image file. When analyzing the image, assume the provided image is in the context of the given criteria and evaluate it accordingly." : "NOT an image file."} Respond with "CORRECT" if the file matches one of the given criteria, and "INCORRECT" otherwise. **ONLY** respond with "CORRECT" and "INCORRECT", nothing else. **DO NOT ADD ADDITIONAL CRITERIA OR ONLY ANSWER WITH "CORRECT" OR "INCORRECT" AND NOTHING ELSE**. Answer "CORRECT" OR "INCORRECT" based on the following criteria: ` + (Array.isArray(question.answer) ? question.answer.join(", ") : question.answer);
         let airesponse;
         if (isImage) {
           const response = await ollama.chat({
@@ -1707,17 +1707,17 @@ app.post('/api/quizzes/:id/submit', async (req, res) => {
           airesponse = response.message.content;
         } else {
           const response = await ollama.chat({
-            model: 'tinyllama:chat',
+            model: 'tinyllama:latest',
             messages: [
-              {role: "system", content: systemPrompt},
-              {role: "user", content: Buffer.from(typeof userAns === 'string' ? userAnsB64 : '', 'base64').toString('ascii')}
+              {role: "system", content: `correct if the file contains 3, correct if the file contains 4: hi4;CORRECT  correct if starts with the letter \`d\`: dare;CORRECT  correct if the file contains only the number 2: 23;INCORRECT  wrong if the file contains the number 4, wrong if the file contains the number 5: 41;INCORRECT  ${Array.isArray(question.answer) ? question.answer.join(", ") : question.answer}: ${Buffer.from(typeof userAns === 'string' ? userAnsB64 : '', 'base64').toString('ascii')};`},
+              //{role: "user", content: Buffer.from(typeof userAns === 'string' ? userAnsB64 : '', 'base64').toString('ascii')}
             ]
           });
 
           airesponse = response.message.content;
           console.log(airesponse);
         }
-        if (typeof airesponse === 'string' && airesponse.includes('CORRECT') && !airesponse.includes('INCORRECT')) {
+        if (typeof airesponse === 'string' && airesponse.startsWith('CORRECT')) {
           fraction = 1;
           totalFraction += fraction;
           correctFileQuestions.push(idx);
