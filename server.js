@@ -67,8 +67,8 @@ app.use((req, res, next) => {
   const origin = req.header("Origin");
   if (origin) {
     res.setHeader("Access-Control-Allow-Origin", origin);
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE");
-    res.setHeader("Access-Control-Allow-Headers", "authorization");
+    res.setHeader("Access-Control-Allow-Methods", "*");
+    res.setHeader("Access-Control-Allow-Headers", "*");
     if (req.method === "OPTIONS") {
       res.status(200).send();
       return;
