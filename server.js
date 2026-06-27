@@ -1714,7 +1714,7 @@ app.post('/api/quizzes/:id/submit', async (req, res) => {
           airesponse = response.response;
           console.log(airesponse);
         }
-        if (typeof airesponse === 'string' && airesponse.startsWith('CORRECT')) {
+        if (typeof airesponse === 'string' && airesponse.toLowerCase().startsWith('CORRECT')) {
           fraction = 1;
           totalFraction += fraction;
           correctFileQuestions.push(idx);
