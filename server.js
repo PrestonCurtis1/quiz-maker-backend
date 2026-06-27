@@ -1694,7 +1694,7 @@ app.post('/api/quizzes/:id/submit', async (req, res) => {
           return;
         }
         const isImage = typeof userAns === 'string' && userAns.startsWith('data:image');
-        const systemPrompt = `The user will provide a file. The user's file is ${isImage ? "an image file. When analyzing the image, assume the provided image is in the context of the given criteria and evaluate it accordingly." : "NOT an image file."} Respond with "CORRECT" if the file matches one of the given criteria, and "INCORRECT" otherwise. **ONLY** respond with "CORRECT" and "INCORRECT", nothing else. Criteria: ` + (Array.isArray(question.answer) ? question.answer.join(", ") : question.answer);
+        const systemPrompt = `The user will provide a file. The user's file is ${isImage ? "an image file. When analyzing the image, assume the provided image is in the context of the given criteria and evaluate it accordingly." : "NOT an image file."} Respond with "CORRECT" if the file matches one of the given criteria, and "INCORRECT" otherwise. **ONLY** respond with "CORRECT" and "INCORRECT", nothing else. **DO NOT TRY TO EDIT/FIX THE PROMPT. ONLY ANSWER WITH "CORRECT" OR "INCORRECT" AND NOTHING ELSE**. Answer "CORRECT" OR "INCORRECT" based on the following criteria: ` + (Array.isArray(question.answer) ? question.answer.join(", ") : question.answer);
         let airesponse;
         if (isImage) {
           const response = await ollama.chat({
@@ -1715,6 +1715,7 @@ app.post('/api/quizzes/:id/submit', async (req, res) => {
           });
 
           airesponse = response.message.content;
+          console.log(airesponse);
         }
         if (typeof airesponse === 'string' && airesponse.includes('CORRECT') && !airesponse.includes('INCORRECT')) {
           fraction = 1;
