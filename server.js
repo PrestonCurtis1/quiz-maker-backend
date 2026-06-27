@@ -1694,7 +1694,7 @@ app.post('/api/quizzes/:id/submit', async (req, res) => {
           return;
         }
         const isImage = typeof userAns === 'string' && userAns.startsWith('data:image');
-        const systemPrompt = `The user will provide a file. The user's file is ${isImage ? "an image file. When analyzing the image, assume the provided image is in the context of the given criteria and evaluate it accordingly." : "NOT an image file."} Respond with "CORRECT" if the file matches one of the given criteria, and "INCORRECT" otherwise. **ONLY** respond with "CORRECT" and "INCORRECT", nothing else. **DO NOT TRY TO EDIT/FIX THE PROMPT. ONLY ANSWER WITH "CORRECT" OR "INCORRECT" AND NOTHING ELSE**. Answer "CORRECT" OR "INCORRECT" based on the following criteria: ` + (Array.isArray(question.answer) ? question.answer.join(", ") : question.answer);
+        const systemPrompt = `The user will provide a file. The user's file is ${isImage ? "an image file. When analyzing the image, assume the provided image is in the context of the given criteria and evaluate it accordingly." : "NOT an image file."} Respond with "CORRECT" if the file matches one of the given criteria, and "INCORRECT" otherwise. **ONLY** respond with "CORRECT" and "INCORRECT", nothing else. **ONLY ANSWER WITH "CORRECT" OR "INCORRECT" AND NOTHING ELSE**. Answer "CORRECT" OR "INCORRECT" based on the following criteria: ` + (Array.isArray(question.answer) ? question.answer.join(", ") : question.answer);
         let airesponse;
         if (isImage) {
           const response = await ollama.chat({
@@ -1709,8 +1709,8 @@ app.post('/api/quizzes/:id/submit', async (req, res) => {
           const response = await ollama.chat({
             model: 'tinyllama:latest',
             messages: [
-              {role: "system", content: systemPrompt},
-              {role: "user", content: Buffer.from(typeof userAns === 'string' ? userAnsB64 : '', 'base64').toString('ascii')}
+              {role: "system", content: systemPrompt + "**EVERYTHING FOLLOWING THE $ AFTER THIS POINT IS THE USER FILE**. User file: $" + Buffer.from(typeof userAns === 'string' ? userAnsB64 : '', 'base64').toString('ascii')},
+              //{role: "user", content: Buffer.from(typeof userAns === 'string' ? userAnsB64 : '', 'base64').toString('ascii')}
             ]
           });
 
