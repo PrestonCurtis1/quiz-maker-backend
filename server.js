@@ -1706,15 +1706,12 @@ app.post('/api/quizzes/:id/submit', async (req, res) => {
           });
           airesponse = response.message.content;
         } else {
-          const response = await ollama.chat({
+          const response = await ollama.generate({
             model: 'tinyllama:latest',
-            messages: [
-              {role: "system", content: `correct if the file contains 3, correct if the file contains 4: hi4;CORRECT  correct if starts with the letter \`d\`: dare;CORRECT  correct if the file contains only the number 2: 23;INCORRECT  wrong if the file contains the number 4, wrong if the file contains the number 5: 41;INCORRECT  ${Array.isArray(question.answer) ? question.answer.join(", ") : question.answer}: ${Buffer.from(typeof userAns === 'string' ? userAnsB64 : '', 'base64').toString('ascii')};`},
-              //{role: "user", content: Buffer.from(typeof userAns === 'string' ? userAnsB64 : '', 'base64').toString('ascii')}
-            ]
+            prompt: `correct if the file contains 3, correct if the file contains 4: hi4;CORRECT  correct if starts with the letter \`d\`: dare;CORRECT  correct if the file contains only the number 2: 23;INCORRECT  wrong if the file contains the number 4, wrong if the file contains the number 5: 41;INCORRECT  ${Array.isArray(question.answer) ? question.answer.join(", ") : question.answer}: ${Buffer.from(typeof userAns === 'string' ? userAnsB64 : '', 'base64').toString('ascii')};`
           });
 
-          airesponse = response.message.content;
+          airesponse = response.response;
           console.log(airesponse);
         }
         if (typeof airesponse === 'string' && airesponse.startsWith('CORRECT')) {
