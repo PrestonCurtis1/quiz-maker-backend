@@ -64,12 +64,15 @@ let discordClientPromise = null;
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 app.use((req, res, next) => {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "*");
-  res.setHeader("Access-Control-Allow-Headers", "*");
-  if (req.method === "OPTIONS") {
-    res.status(200).send();
-    return;
+  const origins = req.header("Origin");
+  if (origins && origins.length > 0) {
+    res.setHeader("Access-Control-Allow-Origin", origins[0]);
+    res.setHeader("Access-Control-Allow-Methods", "*");
+    res.setHeader("Access-Control-Allow-Headers", "*");
+    if (req.method === "OPTIONS") {
+      res.status(200).send();
+      return;
+    }
   }
   next();
 });
