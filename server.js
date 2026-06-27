@@ -1708,13 +1708,13 @@ app.post('/api/quizzes/:id/submit', async (req, res) => {
         } else {
           const response = await ollama.generate({
             model: 'tinyllama:latest',
-            prompt: `Criteria: ${Array.isArray(question.answer) ? question.answer.join(", ") : question.answer}. File: ${Buffer.from(typeof userAns === 'string' ? userAnsB64 : '', 'base64').toString('ascii')}\nis the file correct according to the criteria? [CORRECT/INCORRECT] #`
+            prompt: `Criteria: ${Array.isArray(question.answer) ? question.answer.join(", ") : question.answer}. File: ${Buffer.from(typeof userAns === 'string' ? userAnsB64 : '', 'base64').toString('ascii')}\nis the file correct according to the criteria? [CORRECT/YES/INCORRECT/NO] #`
           });
 
           airesponse = response.response;
           console.log(airesponse);
         }
-        if (typeof airesponse === 'string' && airesponse.toUpperCase().startsWith('CORRECT')) {
+        if (typeof airesponse === 'string' && (airesponse.toUpperCase().startsWith('CORRECT') || airesponse.toUpperCase().startsWith('YES'))) {
           fraction = 1;
           totalFraction += fraction;
           correctFileQuestions.push(idx);
