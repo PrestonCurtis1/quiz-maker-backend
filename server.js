@@ -1698,7 +1698,7 @@ app.post('/api/quizzes/:id/submit', async (req, res) => {
         let airesponse;
         if (isImage) {
           const response = await ollama.chat({
-            model: 'gemma4:e2b-it-q4_K_M',
+            model: 'gemma4:e2b-it-q4_K_M', // Sadly, we can't really do image files with tinyllama for now :(
             messages: [
               {role: "system", content: systemPrompt},
               {role: "user", images: [userAnsB64] }
@@ -1707,7 +1707,7 @@ app.post('/api/quizzes/:id/submit', async (req, res) => {
           airesponse = response.message.content;
         } else {
           const response = await ollama.chat({
-            model: 'gemma4:e2b-it-q4_K_M',
+            model: 'tinyllama:latest',
             messages: [
               {role: "system", content: systemPrompt},
               {role: "user", content: Buffer.from(typeof userAns === 'string' ? userAnsB64 : '', 'base64').toString('ascii')}
